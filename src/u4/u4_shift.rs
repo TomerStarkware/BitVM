@@ -1,5 +1,5 @@
-use crate::treepp::{script, Script};
 use super::u4_std::u4_drop;
+use crate::treepp::{script, Script};
 
 // right and left shfit tables for 3 bits options
 // compressed to reduce the size of the script

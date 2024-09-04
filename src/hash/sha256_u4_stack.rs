@@ -555,7 +555,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
     stack.set_breakpoint("final");
 
-    stack.get_script()
+    stack.get_scri pt()
 }
 
 #[cfg(test)]
@@ -581,16 +581,16 @@ mod tests {
     #[test]
     fn test_shatemp() {
         let mut stack = StackTracker::new();
-        stack.custom(
-            script! {
-                {u4_number_to_nibble(0xdeadbeaf)}
-                {u4_number_to_nibble(0x01020304)}
-            },
-            0,
-            false,
-            0,
-            "message",
-        );
+        // stack.custom(
+        //     script! {
+        //         {u4_number_to_nibble(0xdeadbeaf)}
+        //         {u4_number_to_nibble(0x01020304)}
+        //     },
+        //     0,
+        //     false,
+        //     0,
+        //     "message",
+        // );
 
         sha256_stack(&mut stack, 8);
         stack.run();
@@ -605,13 +605,8 @@ mod tests {
         println!("Result: {}", res);
 
         let mut stack = StackTracker::new();
-        stack.custom(
-            script! { {u4_hex_to_nibbles(hex_in)}},
-            0,
-            false,
-            0,
-            "message",
-        );
+        let y = script! { {u4_hex_to_nibbles(hex_in)}};
+        // stack.custom(y, 0, false, 0, "message");
 
         let shascript = sha256_stack(&mut stack, hex_in.len() as u32 / 2);
 
@@ -728,13 +723,13 @@ mod tests {
         assert_eq!(res.as_str(), genesis_block_hash);
 
         let mut stack = StackTracker::new();
-        stack.custom(
-            script! { {u4_hex_to_nibbles(block_header)}},
-            0,
-            false,
-            0,
-            "message",
-        );
+        // stack.custom(
+        //     script! { {u4_hex_to_nibbles(block_header)}},
+        //     0,
+        //     false,
+        //     0,
+        //     "message",
+        // );
         sha256_stack(&mut stack, block_header.len() as u32 / 2);
         let shascript = sha256_stack(&mut stack, 32);
 

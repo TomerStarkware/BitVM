@@ -141,10 +141,7 @@ pub fn calculate_s(
     }
 }
 
-fn get_w_pos(i: u32) -> u32 {
-    
-    (i + 1) * 8
-}
+fn get_w_pos(i: u32) -> u32 { (i + 1) * 8 }
 
 fn get_extra_pos(i: u32) -> u32 { (i - 16) * 8 }
 
@@ -274,14 +271,14 @@ pub fn sha256(num_bytes: u32) -> Script {
         bytes_per_chunk.push(0);
     }
     println!("{:?}", bytes_per_chunk);
-    println!("{:?}", padding_scripts);
+    // println!("{:?}", padding_scripts);
 
     let add_size = 130;
     let sched_size = 128;
     let rrot_size = 96;
     let half_logic_size = 136 + 16;
     let mut tables_size = rrot_size + half_logic_size;
-    let use_add_table = chunks == 1;
+    let use_add_table = chunks == 0;
     if use_add_table {
         tables_size += add_size;
     }
@@ -330,7 +327,9 @@ pub fn sha256(num_bytes: u32) -> Script {
 
             //schedule loop
             for i in 16..64 {
-                { schedule_iteration(i, sched_size + get_extra_pos(i), sched_loop_offset_rrot + get_extra_pos(i), sched_loop_offset_and + get_extra_pos(i), sched_loop_offset_add + get_extra_pos(i), use_add_table, false) }
+                { schedule_iteration(
+                    i, sched_size + get_extra_pos(i), sched_loop_offset_rrot + get_extra_pos(i), sched_loop_offset_and + get_extra_pos(i), sched_loop_offset_add + get_extra_pos(i), use_add_table, false
+                ) }
             }
 
             //change xor with and table
@@ -474,8 +473,10 @@ mod tests {
     fn test_sizes() {
         let x = sha256(80);
         println!("sha 80 bytes: {}", x.len());
-        let x = sha256(32);
+        let mut x = sha256(32);
         println!("sha 32 bytes: {}", x.len());
+        let res = execute_script(x);
+        // println!("!@!@!@!@@@!!@\n{:?}\n", res.final_stack);
         let x = calculate_s(20, 30, 40, vec![7, 18, 3], true, false);
         println!("compute s (xor)  : {}", x.len());
         let x = calculate_s(20, 30, 40, vec![7, 18, 3], true, true);
@@ -509,7 +510,7 @@ mod tests {
         let result = hasher.finalize();
         let res = hex::encode(result);
         println!("Result: {}", res);
-
+        println!("hexin {} hexinlen {}", hex_in, hex_in.len());
         let script = script! {
             { u4_hex_to_nibbles(hex_in) }
             { sha256(hex_in.len() as u32 /2)}
@@ -532,11 +533,12 @@ mod tests {
             OP_TRUE
 
         };
-
+        println!("script len {}", script.len());
         let res = execute_script(script);
         assert!(res.success);
     }
-
+    #[test]
+    fn foo() { test_sha256("1234567812345678123456781234567812345678123456781234567812345678") }
     #[test]
     fn test_sha256_strs() {
         let message = "Hello.";

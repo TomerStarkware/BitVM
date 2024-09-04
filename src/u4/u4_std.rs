@@ -81,6 +81,12 @@ pub fn u4_number_to_nibble(n: u32) -> Script {
     }
 }
 
+#[test]
+fn foo() {
+    let script = u4_number_to_nibble(32 * 8);
+    // println!("abc\n{:?}", script);
+}
+
 pub fn u4_hex_to_nibbles(hex_str: &str) -> Script {
     let nibbles: Result<Vec<u8>, std::num::ParseIntError> = hex_str
         .chars()
@@ -130,16 +136,16 @@ impl CalculateOffset for i32 {
                 panic!("unexpected opcode: {:?}", element);
             }
         }
-        
+
         Script::new("").push_opcode(element)
     }
 }
 #[cfg(test)]
 mod tests {
 
+    use super::{u4_hex_to_nibbles, u4_repeat_number};
     use crate::treepp::{execute_script, script};
     use crate::u4::u4_std::u4_number_to_nibble;
-    use super::{u4_hex_to_nibbles, u4_repeat_number};
 
     #[test]
     fn test_repeat() {

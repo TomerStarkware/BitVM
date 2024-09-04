@@ -935,7 +935,8 @@ mod tests {
             "sha256 chunk: {} bytes",
             sha256_transform(8 + 16 + 64 + 1, 8 + 16).len()
         );
-        let hex_in = "6162636462636465636465666465666765666768666768696768696a68696a6b696a6b6c6a6b6c6d6b6c6d6e6c6d6e6f6d6e6f706e6f70716f7071727071727371727374727374757374757674757677";
+        let hex_in = "1234567812345678123456781234567812345678123456781234567812345678";
+        println!("hexinlen{}", hex_in.len() / 2);
         let mut hasher = Sha256::new();
         let data = hex::decode(hex_in).unwrap();
         hasher.update(&data);
@@ -964,6 +965,7 @@ mod tests {
             }
             OP_TRUE
         };
+        println!("script-len: {}", script.len());
         let res = execute_script(script);
         assert!(res.success);
     }
