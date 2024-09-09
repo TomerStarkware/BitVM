@@ -74,20 +74,20 @@ pub fn sha256_32bytes() -> Script {
 
         // top of stack: [ [n bytes input] ]
         {u8_push_xor_table()}
-        {sha256_k()}
+        // {sha256_k()}
         // top of stack: [ [64 byte chunks]... ]
         {padding_add_roll(32)}
         {sha256_init()}
         // top of stack: [ [64 byte chunks]..., state[0-7]]
-        {sha256_transform_32bytes(8 + 16 + 64 + 1, 8 + 16)}
+        {sha256_transform_32bytes(8 + 16  + 1)}
 
         {sha256_final()}
         for _ in 0..8 {
             {u32_toaltstack()}
         }
-        for _ in 0..64 {
-            {u32_drop()}
-        }
+        // for _ in 0..64 {
+        //     {u32_drop()}
+        // }
         {u8_drop_xor_table()}
 
         for _ in 0..8 {
@@ -290,7 +290,7 @@ pub fn sha256_transform(xor_depth: u32, k_depth: u32) -> Script {
     }
 }
 
-pub fn sha256_transform_32bytes(xor_depth: u32, k_depth: u32) -> Script {
+pub fn sha256_transform_32bytes(xor_depth: u32) -> Script {
     script! {
         // push old state to alt stack
         for _ in 0..8 {
@@ -480,7 +480,8 @@ pub fn sha256_transform_32bytes(xor_depth: u32, k_depth: u32) -> Script {
             {ch(1, 2, 3, xor_depth+44)}
             {u32_add_drop(0, 1)}
 
-            {u32_pick(k_depth+44+i)} // pick k
+            // {u32_pick(k_depth+44+i)} // pick k
+            {u32_push(K[i as usize])}
             {u32_add_drop(0, 1)}
 
             {u32_pick(4+63-i)} // pick m

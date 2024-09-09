@@ -1,6 +1,7 @@
 use crate::treepp::{script, Script};
 
 use crate::u4::u4_add::u4_arrange_nibbles;
+use crate::u4::u4_shift::u4_rshift;
 
 use super::u4_std::u4_drop;
 
@@ -1024,6 +1025,7 @@ pub fn u4_and(lookup: u32, table: u32) -> Script {
 }
 
 //(a xor b) = (a + b) - 2*(a & b)) = b - 2(a&b) + a
+//2(a&b) = a + b - (a xor b)
 pub fn u4_xor_with_and(lookup: u32, table: u32) -> Script {
     script! {
         OP_2DUP
@@ -1043,6 +1045,16 @@ pub fn u4_xor_with_and_table(lookup: u32) -> Script {
         OP_ADD
         OP_SUB
         OP_ADD
+    }
+}
+
+pub fn u4_and_with_xor_table(lookup: u32) -> Script {
+    script! {
+        OP_2DUP
+        { u4_and_half_table( lookup+2) }
+        OP_SUB
+        OP_ADD
+        {u4_rshift(1, lookup+16+136-1)}
     }
 }
 
@@ -1078,7 +1090,10 @@ pub fn u4_xor_u32(bases: Vec<u32>, offset: u32, do_xor_with_and: bool) -> Script
 #[cfg(test)]
 mod tests {
 
+    use bitcoin::opcodes::OP_TRUE;
+
     use crate::u4::u4_logic::*;
+    use crate::u4::u4_rot::{u4_drop_rrot_tables, u4_push_rrot_tables};
     use crate::u4::u4_shift::{u4_drop_rshift_tables, u4_push_rshift_tables};
     use crate::u4::u4_std::{u4_number_to_nibble, u4_u32_verify_from_altstack};
     use crate::{execute_script, treepp::script};
@@ -1247,11 +1262,43 @@ mod tests {
             { u4_drop_logic_table() }
             OP_TRUE
         };
-
         println!("{}", script.len());
         let res = execute_script(script);
 
         assert!(res.success);
+    }
+
+    #[test]
+    fn test_and_with_xor_func() {
+        for x in 0..16 {
+            for y in 0..16 {
+                let script = script! {
+                    { u4_push_rrot_tables() }
+                    { u4_push_half_xor_table() }
+                    { u4_push_half_lookup() }
+                    OP_NOP OP_NOP OP_NOP
+                    // {y}
+                    // {u4_rshift(1, 16+136)}
+                    // {y>>1}
+                    // OP_EQUALVERIFY
+                    {x}      // X
+                    {y}       // Y
+                    { u4_and_with_xor_table(2)}
+                    {x&y}
+                    OP_EQUALVERIFY
+                    { u4_drop_half_lookup() }
+                    { u4_drop_half_and() }
+                    { u4_drop_rrot_tables() }
+                    OP_TRUE
+                };
+
+                println!("{}", script.len());
+                // println!("{}", script.clone().compile());
+                let res = execute_script(script);
+
+                assert!(res.success);
+            }
+        }
     }
 
     #[test]

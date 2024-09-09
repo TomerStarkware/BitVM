@@ -73,6 +73,23 @@ pub fn u4_push_rshift_tables() -> Script {
     OP_0
     OP_DUP
     OP_2DUP
+
+    OP_15
+    OP_DUP
+    OP_14
+    OP_DUP
+    OP_13
+    OP_DUP
+    OP_12
+    OP_DUP
+    OP_11
+    OP_DUP
+    OP_10
+    OP_DUP
+    OP_9
+    OP_DUP
+    OP_8
+    OP_DUP
     OP_7
     OP_DUP
     OP_6
@@ -92,7 +109,7 @@ pub fn u4_push_rshift_tables() -> Script {
       }
 }
 
-pub fn u4_drop_rshift_tables() -> Script { u4_drop(16 * 3) }
+pub fn u4_drop_rshift_tables() -> Script { u4_drop(16 * 4) }
 
 pub fn u4_push_2_nib_rshift_tables() -> Script {
     script! {
@@ -118,7 +135,11 @@ pub fn u4_lshift(n: u32, lshift_offset: u32) -> Script {
 }
 
 //It will process a nibble and shift it right 1,2 or 3 bits
-pub fn u4_rshift(n: u32, rshift_offset: u32) -> Script {
+pub fn u4_rshift(mut n: u32, rshift_offset: u32) -> Script {
+    assert!(n == 1 || n == 2 || n == 3);
+    if n == 2 || n == 3 {
+        n += 1
+    }
     script! {
         { rshift_offset + (16*(n-1)) }
         OP_ADD
@@ -130,7 +151,7 @@ pub fn u4_rshift(n: u32, rshift_offset: u32) -> Script {
 // It calculates the offset doing (Y << (4-n)) & 15 + (X >> n) & 15
 pub fn u4_2_nib_shift_n(n: u32, tables_offset: u32) -> Script {
     script! {
-        { u4_lshift(4-n, tables_offset + (16*3) + 1)  }
+        { u4_lshift(4-n, tables_offset + (16*4) + 1)  }
         OP_SWAP
         { u4_rshift(n, tables_offset + 1)  }
         OP_ADD
@@ -208,7 +229,7 @@ mod tests {
 
                     { u4_push_rshift_tables() }
                     { x }           //  X
-                    { u4_lshift(n , 0)}
+                    { u4_rshift(n , 0)}
                     { (x >> n) % 16 }
                     OP_EQUALVERIFY
                     { u4_drop_rshift_tables() }

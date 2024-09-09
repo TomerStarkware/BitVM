@@ -1,5 +1,9 @@
+use bitcoin::opcodes::all::{OP_ADD, OP_DUP, OP_SUB};
+
 use crate::treepp::{script, Script};
+use crate::u4::u4_shift::u4_rshift;
 use crate::u4::{u4_add::*, u4_logic::*, u4_rot::*, u4_std::*};
+use std::fmt::Debug;
 use std::vec;
 
 const K: [u32; 64] = [
@@ -171,6 +175,32 @@ pub fn debug() -> Script {
     }
 }
 
+pub fn ch_calculation1(e: u32, f: u32, g: u32, offset_and: u32) -> Script {
+    script! {
+        for nib in 0..8 {
+
+
+            {g+7}                     // g_nib_pos
+            OP_PICK                   // g[nib]
+
+            OP_DUP                    // g g
+
+            {f +7 +2 }                  // g g f_nib_pos
+            OP_PICK                   // g g f
+
+            { u4_and_half_table(nib + offset_and + 3) }   // g (f ^ g)
+
+            {e + 7 +2}                     // g (f ^ g) e_nib_pos
+            OP_PICK                   // g (f ^ g) e
+
+            { u4_and_with_xor_table(nib + offset_and + 3) }   // g ((f ^ g) & e )
+
+            { u4_and_half_table(nib + offset_and + 2) }   // g ^ ((f ^ g) & e)
+
+        }
+    }
+}
+
 pub fn ch_calculation(e: u32, f: u32, g: u32, offset_and: u32) -> Script {
     script! {
         for nib in 0..8 {
@@ -186,17 +216,49 @@ pub fn ch_calculation(e: u32, f: u32, g: u32, offset_and: u32) -> Script {
             { g + 7  + 2}                      // e  ~e  g_nib_pos (account for e and ~e)
             OP_PICK                                 // e  ~e  g
 
-            { u4_and_half_table(nib + offset_and + 3) }   // e  ( ~e & g )
+            { u4_and_with_xor_table(nib + offset_and + 3) }   // e  ( ~e & g )
             OP_SWAP                                 // ( ~e & g ) e
 
 
             { f + 7  + 2}                      // ( ~e & g ) e f_nib_pos
             OP_PICK                                 // ( ~e & g ) e f
 
-            { u4_and_half_table(nib + offset_and + 3) }   // ( ~e & g ) (e & f)
-            { u4_xor_with_and_table(nib + offset_and + 2) }   // ( ~e & g ) ^ (e & f)
+            { u4_and_with_xor_table(nib + offset_and + 3) }   // ( ~e & g ) (e & f)
+            { u4_and_half_table(nib + offset_and + 2) }   // ( ~e & g ) ^ (e & f)
 
             //OP_TOALTSTACK
+        }
+    }
+}
+
+pub fn maj_calculation1(a: u32, b: u32, c: u32, offset_and: u32) -> Script {
+    script! {
+        for nib in 0..8 {
+
+            { a + 7  }                                    // a_nib_pos
+            OP_PICK                                       // a[nib]
+
+            { b + 7 + 1 }                                 // a b_nib_pos
+            OP_PICK                                       // a b
+
+            {c + 7+ 2}                                  // a b c_nib_pos
+            OP_PICK                                       // a b c
+
+            OP_3DUP                                      // a b c a b c
+
+            { u4_and_half_table(nib + offset_and + 6) }  // a b c a (b^c)
+
+            { u4_and_half_table(nib + offset_and + 5) }  // a b c (a^b^c)
+
+
+            OP_SUB                                       // a b (c - (a^b^c))
+
+            OP_ADD                                       // a (b + (c - (a^b^c)))
+
+            OP_ADD                                       // (a + b + (c - (a^b^c)))
+
+            {u4_rshift(1, nib+offset_and+16+136+1)}
+
         }
     }
 }
@@ -210,20 +272,21 @@ pub fn maj_calculation(a: u32, b: u32, c: u32, offset_and: u32) -> Script {
 
             { b + 7 + 1 }                                 // a b_nib_pos
             OP_PICK                                       // a b
+
             OP_2DUP                                       // a b a b
 
-            { u4_xor_with_and_table(nib + offset_and + 4) }   // a b (a^b)
+            { u4_and_half_table(nib + offset_and + 4) }   // a b (a^b)
 
             { c + 7 + 3 }                                 // a b (a^b) c_nib_pos
             OP_PICK                                       // a b (a^b) c
 
-            { u4_and_half_table(nib + offset_and + 4) }   // a b ((a^b) & c)
+            { u4_and_with_xor_table(nib + offset_and + 4) }   // a b ((a^b) & c)
             OP_ROT
             OP_ROT                                        // ((a^b) & c) a b
 
-            { u4_and_half_table(nib + offset_and + 3) }   // ((a^b) & c) (a & b)
+            { u4_and_with_xor_table(nib + offset_and + 3) }   // ((a^b) & c) (a & b)
 
-            { u4_xor_with_and_table(nib + offset_and + 2) }   // ((a^b) & c) ^ (a & b)
+            { u4_and_half_table(nib + offset_and + 2) }   // ((a^b) & c) ^ (a & b)
 
         }
     }
@@ -275,10 +338,10 @@ pub fn sha256(num_bytes: u32) -> Script {
 
     let add_size = 130;
     let sched_size = 128;
-    let rrot_size = 96;
+    let rrot_size = 112;
     let half_logic_size = 136 + 16;
     let mut tables_size = rrot_size + half_logic_size;
-    let use_add_table = chunks == 0;
+    let use_add_table = chunks == 1;
     if use_add_table {
         tables_size += add_size;
     }
@@ -300,22 +363,23 @@ pub fn sha256(num_bytes: u32) -> Script {
         if use_add_table {
             { u4_push_add_tables() }
         }
-        { u4_push_rrot_tables() }     // rshiftn 16*6= 96
+        { u4_push_rrot_tables() }     // rshiftn 16*6= 96 + 16 = 112
         { u4_push_half_xor_table() }  // 136
+        // { u4_push_half_and_table() }  // 136
         { u4_push_half_lookup() }     // 16
                                       // total :  136 + 16 + 96 = 248
 
         for c in 0..chunks {
 
-            if c > 0 {
-                //change and with xor
-                //TODO: if lookup table is pushed first and substracted
-                // then we could avoid changing it  ~(32 * chunk)
-                { u4_drop_half_lookup() }
-                { u4_drop_half_and() }
-                { u4_push_half_xor_table() }
-                { u4_push_half_lookup() }
-            }
+            // if c > 0 {
+            //     //change and with xor
+            //     //TODO: if lookup table is pushed first and substracted
+            //     // then we could avoid changing it  ~(32 * chunk)
+            //     { u4_drop_half_lookup() }
+            //     { u4_drop_half_and() }
+            //     { u4_push_half_xor_table() }
+            //     { u4_push_half_lookup() }
+            // }
 
             for _ in 0..bytes_per_chunk[c as usize]*2 {
                 { (tables_size + (num_bytes * 2) - 1 - (c*128))  }
@@ -332,13 +396,13 @@ pub fn sha256(num_bytes: u32) -> Script {
                 ) }
             }
 
-            //change xor with and table
-            { u4_toaltstack(full_sched_size) }
-            { u4_drop_half_lookup() }
-            { u4_drop_half_and() }
-            { u4_push_half_and_table() }
-            { u4_push_half_lookup() }
-            { u4_fromaltstack(full_sched_size) }
+            // //change xor with and table
+            // { u4_toaltstack(full_sched_size) }
+            // { u4_drop_half_lookup() }
+            // { u4_drop_half_and() }
+            // { u4_push_half_and_table() }
+            // { u4_push_half_lookup() }
+            // { u4_fromaltstack(full_sched_size) }
 
             if c == 0 {
                 //set initial variables a,b,c,d,e,f,g,h
@@ -355,12 +419,12 @@ pub fn sha256(num_bytes: u32) -> Script {
             for i in 0..64 {
 
                 //Calculate S1
-                { calculate_s( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false, true  ) }
+                { calculate_s( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false, false  ) }
                 { u4_fromaltstack(8)}
 
 
                 //calculate ch (this leaves on the stack)
-                { ch_calculation(8 + get_pos_var('e'), 8 + get_pos_var('f'), 8 + get_pos_var('g'), 8 + main_loop_offset_and ) }
+                { ch_calculation1(8 + get_pos_var('e'), 8 + get_pos_var('f'), 8 + get_pos_var('g'), 8 + main_loop_offset_and ) }
 
                 //calculate temp1
                 { u4_copy_u32_from( 16 + get_full_w_pos(vars_top, i) ) }
@@ -378,10 +442,10 @@ pub fn sha256(num_bytes: u32) -> Script {
                 { u4_fromaltstack(8)}
 
                 //Calculate S0   (on altstack)
-                { calculate_s( get_pos_var('a'),  main_loop_offset_rrot,  main_loop_offset_and, vec![2, 13, 22], false, true  ) }
+                { calculate_s( get_pos_var('a'),  main_loop_offset_rrot,  main_loop_offset_and, vec![2, 13, 22], false, false  ) }
 
                 //Calculate maj  (on stack)
-                { maj_calculation( get_pos_var('a'),  get_pos_var('b'),  get_pos_var('c'),  main_loop_offset_and ) }
+                { maj_calculation1( get_pos_var('a'),  get_pos_var('b'),  get_pos_var('c'),  main_loop_offset_and ) }
 
                 //copies temp1
                 { u4_copy_u32_from(8) }
@@ -538,7 +602,12 @@ mod tests {
         assert!(res.success);
     }
     #[test]
-    fn foo() { test_sha256("1234567812345678123456781234567812345678123456781234567812345678") }
+    fn foo64() {
+        test_sha256("12345678123456781234567812345678123456781234567812345678123456781234567812345678123456781234567812345678123456781234567812345678")
+    }
+    #[test]
+
+    fn foo32() { test_sha256("1234567812345678123456781234567812345678123456781234567812345678") }
     #[test]
     fn test_sha256_strs() {
         let message = "Hello.";
