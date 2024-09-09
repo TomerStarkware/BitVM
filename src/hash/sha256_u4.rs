@@ -338,10 +338,10 @@ pub fn sha256(num_bytes: u32) -> Script {
 
     let add_size = 130;
     let sched_size = 128;
-    let rrot_size = 112;
+    let rrot_size = 96;
     let half_logic_size = 136 + 16;
     let mut tables_size = rrot_size + half_logic_size;
-    let use_add_table = chunks == 1;
+    let use_add_table = chunks == 0;
     if use_add_table {
         tables_size += add_size;
     }
@@ -363,7 +363,7 @@ pub fn sha256(num_bytes: u32) -> Script {
         if use_add_table {
             { u4_push_add_tables() }
         }
-        { u4_push_rrot_tables() }     // rshiftn 16*6= 96 + 16 = 112
+        { u4_push_rrot_tables() }     // rshiftn 16*6= 96 = 112
         { u4_push_half_xor_table() }  // 136
         // { u4_push_half_and_table() }  // 136
         { u4_push_half_lookup() }     // 16

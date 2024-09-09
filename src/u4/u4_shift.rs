@@ -1,3 +1,5 @@
+use bitcoin::opcodes::all::{OP_GREATERTHAN, OP_GREATERTHANOREQUAL};
+
 use super::u4_std::u4_drop;
 use crate::treepp::{script, Script};
 
@@ -51,16 +53,6 @@ pub fn u4_drop_lshift_tables() -> Script { u4_drop(16 * 3) }
 pub fn u4_push_rshift_tables() -> Script {
     //rshift3, rshift2, rshift1
     script! {
-    OP_1
-    OP_DUP
-    OP_2DUP
-    OP_2DUP
-    OP_2DUP
-    OP_0
-    OP_DUP
-    OP_2DUP
-    OP_2DUP
-    OP_2DUP
     OP_3
     OP_DUP
     OP_2DUP
@@ -109,7 +101,7 @@ pub fn u4_push_rshift_tables() -> Script {
       }
 }
 
-pub fn u4_drop_rshift_tables() -> Script { u4_drop(16 * 4) }
+pub fn u4_drop_rshift_tables() -> Script { u4_drop(16 * 3) }
 
 pub fn u4_push_2_nib_rshift_tables() -> Script {
     script! {
@@ -136,6 +128,12 @@ pub fn u4_lshift(n: u32, lshift_offset: u32) -> Script {
 
 //It will process a nibble and shift it right 1,2 or 3 bits
 pub fn u4_rshift(mut n: u32, rshift_offset: u32) -> Script {
+    if n == 3 {
+        return script! {
+            { 8 }
+            OP_GREATERTHANOREQUAL
+        };
+    }
     assert!(n == 1 || n == 2 || n == 3);
     if n == 2 || n == 3 {
         n += 1
@@ -151,7 +149,7 @@ pub fn u4_rshift(mut n: u32, rshift_offset: u32) -> Script {
 // It calculates the offset doing (Y << (4-n)) & 15 + (X >> n) & 15
 pub fn u4_2_nib_shift_n(n: u32, tables_offset: u32) -> Script {
     script! {
-        { u4_lshift(4-n, tables_offset + (16*4) + 1)  }
+        { u4_lshift(4-n, tables_offset + (16*3) + 1)  }
         OP_SWAP
         { u4_rshift(n, tables_offset + 1)  }
         OP_ADD
