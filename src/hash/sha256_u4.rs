@@ -1,9 +1,9 @@
-use bitcoin::opcodes::all::{OP_ADD, OP_DUP, OP_SUB};
+use bitcoin::opcodes::all::{OP_ADD, OP_DUP, OP_FROMALTSTACK, OP_SUB, OP_TOALTSTACK};
+use bitcoin_script_stack::script_util::fromaltstack;
 
 use crate::treepp::{script, Script};
 use crate::u4::u4_shift::u4_rshift;
 use crate::u4::{u4_add::*, u4_logic::*, u4_rot::*, u4_std::*};
-use std::fmt::Debug;
 use std::vec;
 
 const K: [u32; 64] = [
@@ -169,7 +169,7 @@ fn get_pos_var(name: char) -> u32 {
 pub fn debug() -> Script {
     script! {
         OP_DEPTH
-        OP_TOALTSTACK
+        0x7777
         60000
         OP_PICK
     }
@@ -293,8 +293,6 @@ pub fn maj_calculation(a: u32, b: u32, c: u32, offset_and: u32) -> Script {
 }
 
 pub fn schedule_iteration(
-    i: u32,
-    offset_top_sched: u32,
     offset_rot: u32,
     offset_and: u32,
     offset_add: u32,
@@ -302,12 +300,13 @@ pub fn schedule_iteration(
     do_xor_with_and: bool,
 ) -> Script {
     script! {
-        { calculate_s( offset_top_sched - get_w_pos(i-15), offset_rot, offset_and, vec![7,18,3], true, do_xor_with_and)}
-        { calculate_s( offset_top_sched - get_w_pos(i-2), offset_rot, offset_and, vec![17,19,10], true, do_xor_with_and)}
+
+        { calculate_s( (15-1) * 8, offset_rot, offset_and, vec![7,18,3], true, do_xor_with_and)}
+        { calculate_s( (2-1) * 8, offset_rot, offset_and, vec![17,19,10], true, do_xor_with_and)}
         { u4_fromaltstack(16) }
-        { u4_copy_u32_from(offset_top_sched - get_w_pos(i-16)+16 )}   // this can be avoided arranging directly with roll
-        { u4_copy_u32_from(offset_top_sched - get_w_pos(i-7)+24 )}
-        { u4_add(8, vec![0, 8, 16, 24], offset_add + 32, use_add_table )}
+        { u4_move_u32_from( (16-1) * 8 + 16 )}   // this can be avoided arranging directly with roll
+        { u4_copy_u32_from((7-1) * 8 + 24 )}
+        { u4_add(8, vec![0, 8, 16, 24], offset_add + 24, use_add_table )}
         { u4_fromaltstack(8) }
     }
 }
@@ -334,14 +333,13 @@ pub fn sha256(num_bytes: u32) -> Script {
         bytes_per_chunk.push(0);
     }
     println!("{:?}", bytes_per_chunk);
-    // println!("{:?}", padding_scripts);
 
     let add_size = 130;
     let sched_size = 128;
     let rrot_size = 96;
     let half_logic_size = 136 + 16;
     let mut tables_size = rrot_size + half_logic_size;
-    let use_add_table = chunks == 0;
+    let use_add_table = chunks <= 2;
     if use_add_table {
         tables_size += add_size;
     }
@@ -350,13 +348,15 @@ pub fn sha256(num_bytes: u32) -> Script {
     let sched_loop_offset_rrot = sched_loop_offset_and + half_logic_size;
     let sched_loop_offset_add = sched_loop_offset_rrot + rrot_size;
 
-    let full_sched_size = 512;
+    let full_sched_size = 128;
     let temp_vars_size = 8 * 8;
 
     let vars_top = temp_vars_size + full_sched_size;
     let main_loop_offset_and = vars_top;
     let main_loop_offset_rrot = main_loop_offset_and + half_logic_size;
     let main_loop_offset_add = main_loop_offset_rrot + rrot_size;
+
+    println!("table size: {}", tables_size);
 
     script! {
 
@@ -365,21 +365,10 @@ pub fn sha256(num_bytes: u32) -> Script {
         }
         { u4_push_rrot_tables() }     // rshiftn 16*6= 96 = 112
         { u4_push_half_xor_table() }  // 136
-        // { u4_push_half_and_table() }  // 136
         { u4_push_half_lookup() }     // 16
                                       // total :  136 + 16 + 96 = 248
 
         for c in 0..chunks {
-
-            // if c > 0 {
-            //     //change and with xor
-            //     //TODO: if lookup table is pushed first and substracted
-            //     // then we could avoid changing it  ~(32 * chunk)
-            //     { u4_drop_half_lookup() }
-            //     { u4_drop_half_and() }
-            //     { u4_push_half_xor_table() }
-            //     { u4_push_half_lookup() }
-            // }
 
             for _ in 0..bytes_per_chunk[c as usize]*2 {
                 { (tables_size + (num_bytes * 2) - 1 - (c*128))  }
@@ -389,95 +378,94 @@ pub fn sha256(num_bytes: u32) -> Script {
 
             { padding_scripts.remove(0) }
 
-            //schedule loop
-            for i in 16..64 {
-                { schedule_iteration(
-                    i, sched_size + get_extra_pos(i), sched_loop_offset_rrot + get_extra_pos(i), sched_loop_offset_and + get_extra_pos(i), sched_loop_offset_add + get_extra_pos(i), use_add_table, false
-                ) }
-            }
-
-            // //change xor with and table
-            // { u4_toaltstack(full_sched_size) }
-            // { u4_drop_half_lookup() }
-            // { u4_drop_half_and() }
-            // { u4_push_half_and_table() }
-            // { u4_push_half_lookup() }
-            // { u4_fromaltstack(full_sched_size) }
-
             if c == 0 {
                 //set initial variables a,b,c,d,e,f,g,h
                 for value in INITSTATE.iter() {
                     { u4_number_to_nibble(*value) }
                 }
             } else {
-                { u4_fromaltstack( 64 )}
+                { u4_fromaltstack( temp_vars_size )}
             }
 
+            for jj in 0..4 {
 
+                //schedule loop
+                if jj !=0 {
 
+                    { u4_toaltstack( temp_vars_size )}
+                    for _ in 16..32 {
+                        { schedule_iteration(
+                             sched_loop_offset_rrot, sched_loop_offset_and , sched_loop_offset_add, use_add_table, false
+                        ) }
+                    }
 
-            for i in 0..64 {
+                    { u4_fromaltstack( temp_vars_size )}
 
-                //Calculate S1
-                { calculate_s( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false, false  ) }
-                { u4_fromaltstack(8)}
-
-
-                //calculate ch (this leaves on the stack)
-                { ch_calculation1(8 + get_pos_var('e'), 8 + get_pos_var('f'), 8 + get_pos_var('g'), 8 + main_loop_offset_and ) }
-
-                //calculate temp1
-                { u4_copy_u32_from( 16 + get_full_w_pos(vars_top, i) ) }
-                { u4_number_to_nibble(K[i as usize])}                    //this add can be optimized by adding nibble constants
-                if use_add_table {
-                    { u4_add(8, vec![0, 8], 32 + main_loop_offset_add, true) }        //this could be joined with the next one and a bigger table
-                    { u4_fromaltstack(8)}
-                    { u4_add(8, vec![0, 8, 16, 24 + get_pos_var('h') ], 24 + main_loop_offset_add, true) }  //consumes h
-                } else {
-                    { u4_add_no_table(8, vec![0, 8, 16, 24, 32 + get_pos_var('h') ]) }  //consumes h
                 }
-                //consumes previous numbers and leaves result on altstack
 
-                //puts temp1 on stack
-                { u4_fromaltstack(8)}
+                for kkkkkkkkkkkkkk in 0..16 {
 
-                //Calculate S0   (on altstack)
-                { calculate_s( get_pos_var('a'),  main_loop_offset_rrot,  main_loop_offset_and, vec![2, 13, 22], false, false  ) }
+                    //Calculate S1
+                    { calculate_s( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false, false  ) }
+                    { u4_fromaltstack(8)}
 
-                //Calculate maj  (on stack)
-                { maj_calculation1( get_pos_var('a'),  get_pos_var('b'),  get_pos_var('c'),  main_loop_offset_and ) }
+                    //calculate ch (this leaves on the stack)
+                    { ch_calculation1(8 + get_pos_var('e'), 8 + get_pos_var('f'), 8 + get_pos_var('g'), 8 + main_loop_offset_and ) }
 
-                //copies temp1
-                { u4_copy_u32_from(8) }
+                    //calculate temp1
+                    { u4_copy_u32_from( 16 + get_full_w_pos(vars_top, kkkkkkkkkkkkkk) ) }
+                    { u4_number_to_nibble(K[(kkkkkkkkkkkkkk + jj * 16) as usize])}                    //this add can be optimized by adding nibble constants
+                    if use_add_table {
+                        { u4_add(8, vec![0, 8], 32 + main_loop_offset_add, true) }        //this could be joined with the next one and a bigger table
+                        { u4_fromaltstack(8)}
+                        { u4_add(8, vec![0, 8, 16, 24 + get_pos_var('h') ], 24 + main_loop_offset_add, true) }  //consumes h
+                    } else {
+                        { u4_add_no_table(8, vec![0, 8, 16, 24, 32 + get_pos_var('h') ]) }  //consumes h
+                    }
+                    //consumes previous numbers and leaves result on altstack
 
-                //put S0 on stack
-                { u4_fromaltstack(8)}
+                    //puts temp1 on stack
+                    { u4_fromaltstack(8)}
 
-                //temp2 = maj + s0
-                //calculate a = temp1 + temp2
-                //consumes the three values and leaves a on the stack updated
-                { u4_add(8, vec![0, 8, 16], main_loop_offset_add + 24, use_add_table) }
-                { u4_fromaltstack(8)}
+                    //Calculate S0   (on altstack)
+                    { calculate_s( get_pos_var('a'),  main_loop_offset_rrot,  main_loop_offset_and, vec![2, 13, 22], false, false  ) }
+
+                    //Calculate maj  (on stack)
+                    { maj_calculation1( get_pos_var('a'),  get_pos_var('b'),  get_pos_var('c'),  main_loop_offset_and ) }
+
+                    //copies temp1
+                    { u4_copy_u32_from(8) }
+
+                    //put S0 on stack
+                    { u4_fromaltstack(8)}
+
+                    //temp2 = maj + s0
+                    //calculate a = temp1 + temp2
+                    //consumes the three values and leaves a on the stack updated
+                    { u4_add(8, vec![0, 8, 16], main_loop_offset_add + 24, use_add_table) }
+                    { u4_fromaltstack(8)}
 
 
-                //all this moves can be avoided doing index magic with get_pos_var('X', round)
-                //b = a
-                { u4_move_u32_from( temp_vars_size  ) }
-                //c = b
-                { u4_move_u32_from( temp_vars_size  ) }
-                //d = c
-                { u4_move_u32_from( temp_vars_size  ) }
+                    //all this moves can be avoided doing index magic with get_pos_var('X', round)
+                    //b = a
+                    { u4_move_u32_from( temp_vars_size  ) }
+                    //c = b
+                    { u4_move_u32_from( temp_vars_size  ) }
+                    //d = c
+                    { u4_move_u32_from( temp_vars_size  ) }
 
-                //e = d + temp1
-                { u4_add(8, vec![32, temp_vars_size], main_loop_offset_add + 8, use_add_table ) }
-                { u4_fromaltstack(8)}
+                    //e = d + temp1
+                    { u4_add(8, vec![32, temp_vars_size], main_loop_offset_add + 8, use_add_table ) }
+                    { u4_fromaltstack(8)}
 
-                //f = e
-                { u4_move_u32_from( temp_vars_size - 8 ) }
-                //g = f
-                { u4_move_u32_from( temp_vars_size - 8 ) }
-                //h = g
-                { u4_move_u32_from( temp_vars_size - 8) }
+                    //f = e
+                    { u4_move_u32_from( temp_vars_size - 8 ) }
+                    //g = f
+                    { u4_move_u32_from( temp_vars_size - 8 ) }
+                    //h = g
+                    { u4_move_u32_from( temp_vars_size - 8) }
+
+                }
 
             }
 
@@ -498,7 +486,7 @@ pub fn sha256(num_bytes: u32) -> Script {
                 }
             }
 
-            { u4_drop(64*8) }       // drop the whole schedule
+            { u4_drop(64*2) }       // drop the whole schedule
 
             //if it's not the last chunk
             //save a copy of the result
@@ -508,13 +496,14 @@ pub fn sha256(num_bytes: u32) -> Script {
                     { 63 }
                     OP_PICK
                 }
+
                 { u4_toaltstack( 128 )}
             }
-
-
         }
 
+
         { u4_drop_half_lookup() }
+
         { u4_drop_half_and() }
         { u4_drop_rrot_tables() }
         if use_add_table {
@@ -522,6 +511,7 @@ pub fn sha256(num_bytes: u32) -> Script {
         }
 
         { u4_fromaltstack( 64 )}
+
 
     }
 }
@@ -531,6 +521,7 @@ mod tests {
 
     use crate::hash::sha256_u4::*;
     use crate::{execute_script, treepp::script};
+    use num_traits::PrimInt;
     use sha2::{Digest, Sha256};
 
     #[test]
@@ -545,7 +536,7 @@ mod tests {
         println!("compute s (xor)  : {}", x.len());
         let x = calculate_s(20, 30, 40, vec![7, 18, 3], true, true);
         println!("compute s (and)  : {}", x.len());
-        let x = schedule_iteration(16, 128, 128, 300, 400, false, true);
+        let x = schedule_iteration(128, 300, 400, false, true);
         println!("schedule it : {}", x.len());
         let x = ch_calculation(10, 20, 30, 300);
         println!("compute ch  : {}", x.len());
@@ -573,8 +564,63 @@ mod tests {
         hasher.update(&data);
         let result = hasher.finalize();
         let res = hex::encode(result);
+        println!("data: {:?}", data);
+        println!("datalenn: {:?}", data.len());
         println!("Result: {}", res);
         println!("hexin {} hexinlen {}", hex_in, hex_in.len());
+
+        // let mut w = vec![0u32; 64];
+
+        // for i in 0..16 {
+        //     w[i] = u32::from_be_bytes([
+        //         data[i * 4],
+        //         data[i * 4 + 1],
+        //         data[i * 4 + 2],
+        //         data[i * 4 + 3],
+        //     ]);
+        // }
+
+        // for i in 16..64 {
+        //     let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+        //     let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+        //     w[i] = w[i - 16]
+        //         .wrapping_add(s0)
+        //         .wrapping_add(w[i - 7])
+        //         .wrapping_add(s1);
+        // }
+
+        // let mut a = INITSTATE[0];
+        // let mut b = INITSTATE[1];
+        // let mut c = INITSTATE[2];
+        // let mut d = INITSTATE[3];
+        // let mut e = INITSTATE[4];
+        // let mut f = INITSTATE[5];
+        // let mut g = INITSTATE[6];
+        // let mut h = INITSTATE[7];
+
+        // for i in 0..64 {
+        //     let S1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        //     println!("S1-{i} {:x}", S1);
+        //     let ch = (e & f) ^ ((!e) & g);
+        //     let temp1 = h
+        //         .wrapping_add(S1)
+        //         .wrapping_add(ch)
+        //         .wrapping_add(K[i])
+        //         .wrapping_add(w[i]);
+        //     let S0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        //     let maj = (a & b) ^ (a & c) ^ (b & c);
+        //     let temp2 = S0.wrapping_add(maj);
+
+        //     h = g;
+        //     g = f;
+        //     f = e;
+        //     e = d.wrapping_add(temp1);
+        //     d = c;
+        //     c = b;
+        //     b = a;
+        //     a = temp1.wrapping_add(temp2);
+        // }
+
         let script = script! {
             { u4_hex_to_nibbles(hex_in) }
             { sha256(hex_in.len() as u32 /2)}
@@ -599,11 +645,12 @@ mod tests {
         };
         println!("script len {}", script.len());
         let res = execute_script(script);
+        println!("{:?}", res.final_stack);
         assert!(res.success);
     }
     #[test]
     fn foo64() {
-        test_sha256("12345678123456781234567812345678123456781234567812345678123456781234567812345678123456781234567812345678123456781234567812345678")
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10")
     }
     #[test]
 

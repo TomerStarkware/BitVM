@@ -222,7 +222,7 @@ pub fn u4_add_internal(nibble_count: u32, number_count: u32, tables_offset: u32)
     let quotient_table_size = 65;
     //extra size on the stack
     let mut offset_calc: i32 = 0;
-    let script = script! {
+    let script: Script = script! {
 
         for i in 0..nibble_count {
 
