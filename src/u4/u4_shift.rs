@@ -135,7 +135,7 @@ pub fn u4_rshift(mut n: u32, rshift_offset: u32) -> Script {
         };
     }
     assert!(n == 1 || n == 2 || n == 3);
-    if n == 2 || n == 3 {
+    if n == 2 {
         n += 1
     }
     script! {

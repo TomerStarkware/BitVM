@@ -1,9 +1,10 @@
-use bitcoin::opcodes::all::{OP_ADD, OP_DUP, OP_FROMALTSTACK, OP_SUB, OP_TOALTSTACK};
+use bitcoin::opcodes::all::{OP_ADD, OP_DUP, OP_FROMALTSTACK, OP_PICK, OP_SUB, OP_TOALTSTACK};
 use bitcoin_script_stack::script_util::fromaltstack;
 
+use crate::hash::blake3::initial_state;
 use crate::treepp::{script, Script};
-use crate::u4::u4_shift::u4_rshift;
-use crate::u4::{u4_add::*, u4_logic::*, u4_rot::*, u4_std::*};
+use crate::u4::u4_shift::{u4_lshift, u4_rshift};
+use crate::u4::{self, u4_add::*, u4_logic::*, u4_rot::*, u4_std::*};
 use std::vec;
 
 const K: [u32; 64] = [
@@ -142,6 +143,51 @@ pub fn calculate_s(
     script! {
         { calculate_s_part_1(offset_number, offset_rrot, shift_value, last_is_shift) }
         { calculate_s_part_2(offset_and, do_xor_with_and) }
+    }
+}
+
+pub fn calculate_s_new(
+    offset_number: u32,
+    offset_rrot: u32,
+    offset_xor: u32,
+    shift_values: Vec<u32>,
+    last_is_shift: bool,
+) -> Script {
+    script! {
+            for i in (0..8).rev(){
+                for (j,shift_value) in shift_values.iter().enumerate() {
+                    {{
+                        let pos_shift = shift_value / 4;
+                        let bit_shift = shift_value % 4;
+
+                        let do_first = !last_is_shift || j < shift_values.len() - 1 || (i + pos_shift) < 8;
+                        let do_second = !last_is_shift || j < shift_values.len() - 1 || (i + pos_shift + 1) < 8;
+
+                        let first_nibble = (i + pos_shift + 8) % 8;
+                        let second_nibble = (i + pos_shift + 1 + 8) % 8;
+                        let stack_offset = (7-i) + (j!=0) as u32;
+                        script! {
+
+                            if do_first {
+                                {offset_number+first_nibble + stack_offset}
+                                OP_PICK
+                                {u4_rshift(bit_shift, offset_rrot + stack_offset)}
+                            }
+                            if do_second {
+                                {offset_number+second_nibble + 1 + stack_offset}
+                                OP_PICK
+                                {u4_lshift(4-bit_shift, offset_rrot + (16*3) + 1 + stack_offset)}
+                                OP_ADD
+                            }
+                            if j != 0 && do_first {
+                                {u4_and_half_table(offset_xor + 2 + 7-i)}
+                            }
+                        }
+                    }}
+                }
+
+                // {u4_and_half_table(offset_xor + shift_values.len() as u32 -1 + 7-i)}
+            }
     }
 }
 
@@ -297,14 +343,12 @@ pub fn schedule_iteration(
     offset_and: u32,
     offset_add: u32,
     use_add_table: bool,
-    do_xor_with_and: bool,
 ) -> Script {
     script! {
 
-        { calculate_s( (15-1) * 8, offset_rot, offset_and, vec![7,18,3], true, do_xor_with_and)}
-        { calculate_s( (2-1) * 8, offset_rot, offset_and, vec![17,19,10], true, do_xor_with_and)}
-        { u4_fromaltstack(16) }
-        { u4_move_u32_from( (16-1) * 8 + 16 )}   // this can be avoided arranging directly with roll
+        { calculate_s_new( (15-1) * 8, offset_rot, offset_and, vec![7,18,3], true)}
+        { calculate_s_new( (2-1) * 8 + 8, offset_rot + 8, offset_and + 8, vec![17,19,10], true)}
+        { u4_move_u32_from( (16-1) * 8 + 16 )}
         { u4_copy_u32_from((7-1) * 8 + 24 )}
         { u4_add(8, vec![0, 8, 16, 24], offset_add + 24, use_add_table )}
         { u4_fromaltstack(8) }
@@ -395,7 +439,7 @@ pub fn sha256(num_bytes: u32) -> Script {
                     { u4_toaltstack( temp_vars_size )}
                     for _ in 16..32 {
                         { schedule_iteration(
-                             sched_loop_offset_rrot, sched_loop_offset_and , sched_loop_offset_add, use_add_table, false
+                             sched_loop_offset_rrot, sched_loop_offset_and , sched_loop_offset_add, use_add_table
                         ) }
                     }
 
@@ -406,8 +450,7 @@ pub fn sha256(num_bytes: u32) -> Script {
                 for kkkkkkkkkkkkkk in 0..16 {
 
                     //Calculate S1
-                    { calculate_s( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false, false  ) }
-                    { u4_fromaltstack(8)}
+                    { calculate_s_new( get_pos_var('e'), main_loop_offset_rrot, main_loop_offset_and, vec![6, 11, 25], false) }
 
                     //calculate ch (this leaves on the stack)
                     { ch_calculation1(8 + get_pos_var('e'), 8 + get_pos_var('f'), 8 + get_pos_var('g'), 8 + main_loop_offset_and ) }
@@ -427,8 +470,6 @@ pub fn sha256(num_bytes: u32) -> Script {
                     //puts temp1 on stack
                     { u4_fromaltstack(8)}
 
-                    //Calculate S0   (on altstack)
-                    { calculate_s( get_pos_var('a'),  main_loop_offset_rrot,  main_loop_offset_and, vec![2, 13, 22], false, false  ) }
 
                     //Calculate maj  (on stack)
                     { maj_calculation1( get_pos_var('a'),  get_pos_var('b'),  get_pos_var('c'),  main_loop_offset_and ) }
@@ -436,8 +477,8 @@ pub fn sha256(num_bytes: u32) -> Script {
                     //copies temp1
                     { u4_copy_u32_from(8) }
 
-                    //put S0 on stack
-                    { u4_fromaltstack(8)}
+                    //Calculate S0   (on altstack)
+                    { calculate_s_new( get_pos_var('a')+16,  main_loop_offset_rrot+16,  main_loop_offset_and+16, vec![2, 13, 22], false  ) }
 
                     //temp2 = maj + s0
                     //calculate a = temp1 + temp2
@@ -528,6 +569,7 @@ mod tests {
     fn test_sizes() {
         let x = sha256(80);
         println!("sha 80 bytes: {}", x.len());
+
         let mut x = sha256(32);
         println!("sha 32 bytes: {}", x.len());
         let res = execute_script(x);
@@ -536,11 +578,11 @@ mod tests {
         println!("compute s (xor)  : {}", x.len());
         let x = calculate_s(20, 30, 40, vec![7, 18, 3], true, true);
         println!("compute s (and)  : {}", x.len());
-        let x = schedule_iteration(128, 300, 400, false, true);
+        let x = schedule_iteration(128, 300, 400, false);
         println!("schedule it : {}", x.len());
-        let x = ch_calculation(10, 20, 30, 300);
+        let x = ch_calculation1(10, 20, 30, 300);
         println!("compute ch  : {}", x.len());
-        let x = maj_calculation(10, 20, 30, 300);
+        let x = maj_calculation1(10, 20, 30, 300);
         println!("compute maj : {}", x.len());
     }
 

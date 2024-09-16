@@ -555,7 +555,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
     stack.set_breakpoint("final");
 
-    stack.get_scri pt()
+    stack.get_script()
 }
 
 #[cfg(test)]
