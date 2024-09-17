@@ -153,6 +153,57 @@ pub fn calculate_s_stack(
     var
 }
 
+// script! {
+//     for nib in 0..8 {
+
+//         {g+7}                     // g_nib_pos
+//         OP_PICK                   // g[nib]
+
+//         OP_DUP                    // g g
+
+//         {f +7 +2 }                  // g g f_nib_pos
+//         OP_PICK                   // g g f
+
+//         { u4_and_half_table(nib + offset_and + 3) }   // g (f ^ g)
+
+//         {e + 7 +2}                     // g (f ^ g) e_nib_pos
+//         OP_PICK                   // g (f ^ g) e
+
+//         { u4_and_with_xor_table(nib + offset_and + 3) }   // g ((f ^ g) & e )
+
+//         { u4_and_half_table(nib + offset_and + 2) }   // g ^ ((f ^ g) & e)
+
+//     }
+pub fn ch1_calculation_stack(
+    stack: &mut StackTracker,
+    e: StackVariable,
+    f: StackVariable,
+    g: StackVariable,
+    lookup: StackVariable,
+    xortable: StackVariable,
+    shift_table: StackVariable,
+) -> StackVariable {
+    let mut ret = Vec::new();
+    for nib in 0..8 {
+        stack.copy_var_sub_n(g, nib); // g[nib]
+        stack.op_dup(); // g g
+
+        stack.copy_var_sub_n(f, nib); // g g f[nib]
+
+        u4_logic_with_table_stack(stack, lookup, xortable, false); // g (g^f)
+
+        stack.copy_var_sub_n(e, nib); // // g (g^f) e
+
+        u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // g (g^f & e)
+
+        ret.push(u4_logic_with_table_stack(stack, lookup, xortable, false)); // g ^ ((f ^ g) & e)
+    }
+
+    stack.join_count(&mut ret[0], 7);
+    stack.rename(ret[0], "ch");
+    ret[0]
+}
+
 pub fn ch_calculation_stack(
     stack: &mut StackTracker,
     e: StackVariable,
@@ -217,6 +268,41 @@ pub fn maj_calculation_stack(
         u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // ((a^b) & c) (a & b)
 
         ret.push(u4_logic_with_table_stack(stack, lookup, xortable, false)); // ((a^b) & c) ^ (a & b)
+    }
+
+    stack.join_count(&mut ret[0], 7);
+    stack.rename(ret[0], "maj");
+    ret[0]
+}
+
+pub fn maj1_calculation_stack(
+    stack: &mut StackTracker,
+    a: StackVariable,
+    b: StackVariable,
+    c: StackVariable,
+    lookup: StackVariable,
+    xortable: StackVariable,
+    shift_table: StackVariable,
+) -> StackVariable {
+    let mut ret = Vec::new();
+    for nib in 0..8 {
+        stack.copy_var_sub_n(a, nib); // a[nib]
+
+        stack.copy_var_sub_n(b, nib); // a b[nib]
+
+        stack.copy_var_sub_n(c, nib); // a b c[nib]
+
+        stack.op_3dup(); // a b c a b c
+
+        u4_logic_with_table_stack(stack, lookup, xortable, false); // a b c a (b^c)
+
+        u4_logic_with_table_stack(stack, lookup, xortable, false); // a b c (a^b^c)
+
+        stack.op_sub(); // a b (c-a^b^c)
+        stack.op_add(); // a (b+c-a^b^c)
+        stack.op_add(); // a+b+c-a^b^c
+
+        ret.push(u4_rshift_stack(stack, shift_table, 1));
     }
 
     stack.join_count(&mut ret[0], 7);
@@ -377,7 +463,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
             );
 
             //calculate ch
-            let mut ch = ch_calculation_stack(
+            let mut ch = ch1_calculation_stack(
                 stack,
                 varmap[&'e'],
                 varmap[&'f'],
@@ -438,7 +524,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
             );
 
             //Calculate maj
-            let mut maj = maj_calculation_stack(
+            let mut maj = maj1_calculation_stack(
                 stack,
                 varmap[&'a'],
                 varmap[&'b'],
