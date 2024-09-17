@@ -1,8 +1,8 @@
-use crate::treepp::{script, Script};
 use crate::u4::{
     u4_add_stack::*, u4_logic_stack::*, u4_rot_stack::*, u4_shift_stack::*, u4_std::*,
 };
-use bitcoin_script_stack::stack::{StackTracker, StackVariable};
+use bitcoin_script_stack::stack::{define_pushable, script, Script, StackTracker, StackVariable};
+define_pushable!();
 use std::{collections::HashMap, vec};
 
 const K: [u32; 64] = [
@@ -21,6 +21,14 @@ const INITSTATE_MAPPING: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const INITSTATE: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
+pub fn u4_number_to_nibble(n: u32) -> Script {
+    //constant number used during "compile" time
+    script! {
+       for i in (0..8).rev() {
+            { (n >> (i * 4)) & 0xF }
+        }
+    }
+}
 
 pub fn double_padding(num_bytes: u32) -> (Vec<Script>, u32) {
     //55 bytes fits in one block
@@ -121,7 +129,9 @@ pub fn calculate_s_stack(
     let mut results = Vec::new();
     for nib in 0..8 {
         u4_rrot_nib_from_u32(stack, shift_table, number, nib, shift_value[0], false);
+
         u4_rrot_nib_from_u32(stack, shift_table, number, nib, shift_value[1], false);
+
         u4_logic_stack_nib(stack, lookup_table, logic_table, do_xor_with_and);
         u4_rrot_nib_from_u32(
             stack,
@@ -290,6 +300,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
         //redefine from nibbles to u32
         assert!(moved_message.len() == 128);
+
         let mut schedule = Vec::new();
         for i in 0..16 {
             let joined = stack.join_count(&mut moved_message[0], 7);
@@ -336,7 +347,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
             stack.set_breakpoint(&format!("schedule[{}]", i));
         }
-
         //exchange xor with and table
         stack.to_altstack_count(64);
         stack.drop(xor_table);
@@ -560,9 +570,14 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
 #[cfg(test)]
 mod tests {
+    use bitcoin_script::Script as StructuredScript;
+    use bitcoin_script_stack::stack::{
+        define_pushable, script, Script, StackTracker, StackVariable,
+    };
+    define_pushable!();
 
     use super::*;
-    use crate::{execute_script, treepp::script};
+    use crate::execute_script;
     use sha2::{Digest, Sha256};
 
     #[test]
@@ -595,7 +610,18 @@ mod tests {
         sha256_stack(&mut stack, 8);
         stack.run();
     }
-
+    pub fn u4_hex_to_nibbles(hex_str: &str) -> Script {
+        let nibbles: Result<Vec<u8>, std::num::ParseIntError> = hex_str
+            .chars()
+            .map(|c| u8::from_str_radix(&c.to_string(), 16))
+            .collect();
+        let nibbles = nibbles.unwrap();
+        script! {
+            for nibble in nibbles {
+                { nibble }
+            }
+        }
+    }
     fn test_sha256(hex_in: &str) {
         let mut hasher = Sha256::new();
         let data = hex::decode(hex_in).unwrap();
@@ -605,35 +631,38 @@ mod tests {
         println!("Result: {}", res);
 
         let mut stack = StackTracker::new();
-        let y = script! { {u4_hex_to_nibbles(hex_in)}};
+        stack.custom(
+            script! {
+                {u4_hex_to_nibbles(hex_in)}
+            },
+            0,
+            false,
+            0,
+            "message",
+        );
         // stack.custom(y, 0, false, 0, "message");
+        sha256_stack(&mut stack, hex_in.len() as u32 / 2);
 
-        let shascript = sha256_stack(&mut stack, hex_in.len() as u32 / 2);
-
-        let script = script! {
-            { shascript }
-            { u4_hex_to_nibbles(res.as_str())}
-            for _ in 0..64 {
-                OP_TOALTSTACK
-            }
-
-            for i in 1..64 {
-                {i}
-                OP_ROLL
-            }
-
-            for _ in 0..64 {
-                OP_FROMALTSTACK
-                OP_EQUALVERIFY
-            }
-            OP_TRUE
-
-        };
-
-        let res = execute_script(script);
+        stack.to_altstack_count(8);
+        let mut expected = stack.var(64, u4_hex_to_nibbles(res.as_str()), "expected");
+        let mut result = stack.from_altstack_joined(8, "res");
+        stack.equals(&mut result, true, &mut expected, true);
+        stack.op_true();
+        let res = stack.run();
+        assert!(res.success);
+        let s = stack.get_script();
+        println!("{}", s.len());
+        let res = execute_script(StructuredScript::new("").push_script(s));
         assert!(res.success);
     }
-
+    #[test]
+    fn foostack64() {
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10")
+    }
+    #[test]
+    fn foostack32() {
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475")
+    }
     #[test]
     fn test_sha256_strs() {
         let message = "Hello.";
@@ -669,11 +698,11 @@ mod tests {
             { 0}
             { 1 }
             { script }
-            { u4_drop(128) }
+            { u4_drop(128).compile() }
             OP_TRUE
         };
 
-        let res = execute_script(script);
+        let res = execute_script(StructuredScript::new("").push_script(script));
         assert!(res.success);
     }
 
@@ -694,13 +723,13 @@ mod tests {
                     OP_DEPTH
                     OP_TOALTSTACK
                 }
-                { u4_drop(chunks*128) }
+                { u4_drop(chunks*128).compile() }
                 OP_DEPTH
                 OP_TOALTSTACK
                 OP_TRUE
             };
 
-            let res = execute_script(script);
+            let res = execute_script(StructuredScript::new("").push_script(script));
             assert!(res.success);
         }
     }
@@ -755,7 +784,7 @@ mod tests {
 
 
         };
-        let res = execute_script(script);
+        let res = execute_script(StructuredScript::new("").push_script(script));
         assert!(res.success);
     }
 }

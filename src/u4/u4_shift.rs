@@ -1,5 +1,3 @@
-use bitcoin::opcodes::all::{OP_GREATERTHAN, OP_GREATERTHANOREQUAL};
-
 use super::u4_std::u4_drop;
 use crate::treepp::{script, Script};
 

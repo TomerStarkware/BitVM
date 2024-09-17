@@ -9,15 +9,15 @@ use super::{
 };
 
 pub fn u4_push_and_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(136, u4_push_half_and_table(), "and_table")
+    stack.var(136, u4_push_half_and_table().compile(), "and_table")
 }
 
 pub fn u4_push_xor_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(136, u4_push_half_xor_table(), "xor_table")
+    stack.var(136, u4_push_half_xor_table().compile(), "xor_table")
 }
 
 pub fn u4_push_xor_full_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(256, u4_push_xor_table(), "xor_full_table")
+    stack.var(256, u4_push_xor_table().compile(), "xor_full_table")
 }
 
 pub fn u4_push_half_lookup_0_based() -> Script {
@@ -42,11 +42,11 @@ pub fn u4_push_half_lookup_0_based() -> Script {
 }
 
 pub fn u4_push_lookup_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(16, u4_push_half_lookup_0_based(), "lookup_table")
+    stack.var(16, u4_push_half_lookup_0_based().compile(), "lookup_table")
 }
 
 pub fn u4_push_full_lookup_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(17, u4_push_lookup(), "full_lookup_table")
+    stack.var(17, u4_push_lookup().compile(), "full_lookup_table")
 }
 
 pub fn u4_logic_with_table_stack(
@@ -56,7 +56,7 @@ pub fn u4_logic_with_table_stack(
     use_full_table: bool,
 ) -> StackVariable {
     if !use_full_table {
-        stack.custom(u4_sort(), 0, false, 0, "sort");
+        stack.custom(u4_sort().compile(), 0, false, 0, "sort");
     }
     stack.get_value_from_table(lookup_table, None);
     stack.op_add();
