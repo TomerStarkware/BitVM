@@ -124,7 +124,6 @@ pub fn calculate_s_stack(
     last_is_shift: bool,
     lookup_table: StackVariable,
     logic_table: StackVariable,
-    do_xor_with_and: bool,
 ) -> StackVariable {
     let mut results = Vec::new();
     for nib in 0..8 {
@@ -132,7 +131,7 @@ pub fn calculate_s_stack(
 
         u4_rrot_nib_from_u32(stack, shift_table, number, nib, shift_value[1], false);
 
-        u4_logic_stack_nib(stack, lookup_table, logic_table, do_xor_with_and);
+        u4_logic_with_table_stack(stack, lookup_table, logic_table, logic_table.size() > 136);
         u4_rrot_nib_from_u32(
             stack,
             shift_table,
@@ -141,11 +140,11 @@ pub fn calculate_s_stack(
             shift_value[2],
             last_is_shift,
         );
-        results.push(u4_logic_stack_nib(
+        results.push(u4_logic_with_table_stack(
             stack,
             lookup_table,
             logic_table,
-            do_xor_with_and,
+            logic_table.size() > 136,
         ));
     }
 
@@ -160,7 +159,8 @@ pub fn ch_calculation_stack(
     f: StackVariable,
     g: StackVariable,
     lookup: StackVariable,
-    andtable: StackVariable,
+    xortable: StackVariable,
+    shift_table: StackVariable,
 ) -> StackVariable {
     let mut ret = Vec::new();
     for nib in 0..8 {
@@ -173,13 +173,14 @@ pub fn ch_calculation_stack(
 
         stack.copy_var_sub_n(g, nib); // e ~e g[nib]
 
-        u4_logic_with_table_stack(stack, lookup, andtable, false); // e  ( ~e & g )
+        u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // e ( ~e & g )
+
         stack.op_swap(); // ( ~e & g ) e
 
         stack.copy_var_sub_n(f, nib); // ( ~e & g ) e f[nib]
 
-        u4_logic_with_table_stack(stack, lookup, andtable, false); // ( ~e & g ) (e & f)
-        ret.push(u4_xor_with_and_stack(stack, lookup, andtable)); // ( ~e & g ) ^ (e & f)
+        u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // ( ~e & g ) (e & f)
+        ret.push(u4_logic_with_table_stack(stack, lookup, xortable, false)); // ( ~e & g ) ^ (e & f)
     }
 
     stack.join_count(&mut ret[0], 7);
@@ -193,7 +194,8 @@ pub fn maj_calculation_stack(
     b: StackVariable,
     c: StackVariable,
     lookup: StackVariable,
-    andtable: StackVariable,
+    xortable: StackVariable,
+    shift_table: StackVariable,
 ) -> StackVariable {
     let mut ret = Vec::new();
     for nib in 0..8 {
@@ -203,18 +205,18 @@ pub fn maj_calculation_stack(
 
         stack.op_2dup(); // a b a b
 
-        u4_xor_with_and_stack(stack, lookup, andtable); // a b (a^b)
+        u4_logic_with_table_stack(stack, lookup, xortable, false); // a b (a^b)
 
         stack.copy_var_sub_n(c, nib); // a b (a^b) c
 
-        u4_logic_with_table_stack(stack, lookup, andtable, false); // a b ((a^b) & c)
+        u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // a b ((a^b) & c)
 
         stack.op_rot();
         stack.op_rot(); // ((a^b) & c) a b
 
-        u4_logic_with_table_stack(stack, lookup, andtable, false); // ((a^b) & c) (a & b)
+        u4_and_with_xor_stack(stack, lookup, xortable, shift_table); // ((a^b) & c) (a & b)
 
-        ret.push(u4_xor_with_and_stack(stack, lookup, andtable)); // ((a^b) & c) ^ (a & b)
+        ret.push(u4_logic_with_table_stack(stack, lookup, xortable, false)); // ((a^b) & c) ^ (a & b)
     }
 
     stack.join_count(&mut ret[0], 7);
@@ -263,7 +265,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     let shift_tables = u4_push_shift_tables_stack(stack);
     let half_lookup = u4_push_lookup_table_stack(stack);
     let mut xor_table = u4_push_xor_table_stack(stack);
-    let mut and_table = StackVariable::null();
 
     let mut varmap: HashMap<char, StackVariable> = HashMap::new();
     let mut initstate: HashMap<char, StackVariable> = HashMap::new();
@@ -271,14 +272,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     stack.set_breakpoint("load tables");
 
     for c in 0..chunks {
-        //change tables
-        if c > 0 {
-            stack.drop(and_table);
-
-            xor_table = u4_push_xor_table_stack(stack);
-            stack.set_breakpoint("change tables");
-        }
-
         //move the message to the top of the stack
         //this can be optimized only moving the las nibbles that would form an u32 with the first part of the padding
         let mut moved_message = (0..bytes_per_chunk[c as usize] * 2)
@@ -320,7 +313,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 true,
                 half_lookup,
                 xor_table,
-                false,
             );
             let mut s1 = calculate_s_stack(
                 stack,
@@ -330,7 +322,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 true,
                 half_lookup,
                 xor_table,
-                false,
             );
             u4_add_stack(
                 stack,
@@ -347,12 +338,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
             stack.set_breakpoint(&format!("schedule[{}]", i));
         }
-        //exchange xor with and table
-        stack.to_altstack_count(64);
-        stack.drop(xor_table);
-
-        and_table = u4_push_and_table_stack(stack);
-        stack.from_altstack_count(64);
 
         if c == 0 {
             for i in 0..INITSTATE.len() {
@@ -388,8 +373,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 vec![6, 11, 25],
                 false,
                 half_lookup,
-                and_table,
-                true,
+                xor_table,
             );
 
             //calculate ch
@@ -399,7 +383,8 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 varmap[&'f'],
                 varmap[&'g'],
                 half_lookup,
-                and_table,
+                xor_table,
+                shift_tables,
             );
 
             //calculate temp1
@@ -449,8 +434,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 vec![2, 13, 22],
                 false,
                 half_lookup,
-                and_table,
-                true,
+                xor_table,
             );
 
             //Calculate maj
@@ -460,7 +444,8 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 varmap[&'b'],
                 varmap[&'c'],
                 half_lookup,
-                and_table,
+                xor_table,
+                shift_tables,
             );
 
             //calculate a = temp1 + s0 + maj
@@ -547,7 +532,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 stack.drop(quotient);
                 stack.drop(modulo);
             }
-            stack.drop(and_table);
+            stack.drop(xor_table);
             stack.drop(half_lookup);
             stack.drop(shift_tables);
             if use_add_table && chunks == 1 {
