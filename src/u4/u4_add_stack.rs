@@ -189,6 +189,8 @@ pub fn u4_add_stack(
     quotient_table: StackVariable,
     modulo_table: StackVariable,
 ) {
+    let number_count = to_copy.len() + to_move.len() + constants.len();
+    let number_count = number_count as u32;
     u4_arrange_nibbles_stack(nibble_count, stack, to_copy, to_move, constants);
     if !modulo_table.is_null() && !quotient_table.is_null() {
         u4_add_internal_stack(

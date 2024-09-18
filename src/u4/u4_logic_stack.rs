@@ -56,6 +56,7 @@ pub fn u4_logic_with_table_stack(
     logic_table: StackVariable,
     use_full_table: bool,
 ) -> StackVariable {
+    let use_full_table = logic_table.size() > 136;
     if !use_full_table {
         stack.custom(u4_sort().compile(), 0, false, 0, "sort");
     }

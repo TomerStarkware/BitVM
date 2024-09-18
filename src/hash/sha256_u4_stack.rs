@@ -1,9 +1,9 @@
-use crate::{
-    hash::sha256_u4::debug,
-    u4::{u4_add_stack::*, u4_logic_stack::*, u4_rot_stack::*, u4_shift_stack::*, u4_std::*},
+use crate::u4::{
+    u4_add_stack::*, u4_logic_stack::*, u4_rot_stack::*, u4_shift_stack::*, u4_std::*,
 };
 use bitcoin_script_stack::stack::{define_pushable, script, Script, StackTracker, StackVariable};
 define_pushable!();
+use core::num;
 use std::{collections::HashMap, vec};
 
 const K: [u32; 64] = [
@@ -22,6 +22,30 @@ const INITSTATE_MAPPING: [char; 8] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const INITSTATE: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
+
+fn scheduling_64_padding() -> [u32; 64] {
+    const PADDING_64_BYTES: [u32; 16] = [
+        0x80000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+        0x00000000, 0x00000200,
+    ];
+    let mut result = [0; 64];
+    result[..16].clone_from_slice(PADDING_64_BYTES.as_ref());
+
+    for i in 16..64 {
+        let s0 = result[i - 15].rotate_right(7)
+            ^ result[i - 15].rotate_right(18)
+            ^ (result[i - 15] >> 3);
+        let s1 =
+            result[i - 2].rotate_right(17) ^ result[i - 2].rotate_right(19) ^ (result[i - 2] >> 10);
+        result[i] = result[i - 16]
+            .wrapping_add(s0)
+            .wrapping_add(result[i - 7])
+            .wrapping_add(s1);
+    }
+    result
+}
+
 pub fn u4_number_to_nibble(n: u32) -> Script {
     //constant number used during "compile" time
     script! {
@@ -163,7 +187,6 @@ pub fn calculate_s_new(
     logic_table: StackVariable,
 ) -> StackVariable {
     let mut results = Vec::new();
-    let number_val = 0xd574e2c5_u32;
     for i in (0..8).rev() {
         let mut res = StackVariable::null();
         for (j, shift_value) in shift_values.iter().enumerate() {
@@ -359,6 +382,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     //println!("{:?}", padding_scripts);
 
     let mut use_add_table = chunks <= 2;
+    let scheduling_64 = scheduling_64_padding();
 
     let mut message = (0..num_bytes * 2)
         .map(|i| stack.define(1, &format!("message[{}]", i)))
@@ -376,6 +400,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
     let shift_tables = u4_push_shift_tables_stack(stack);
     let half_lookup = u4_push_lookup_table_stack(stack);
+
     let xor_table = u4_push_xor_table_stack(stack);
 
     let mut varmap: HashMap<char, StackVariable> = HashMap::new();
@@ -392,33 +417,43 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
         message.drain(0..moved_message.len());
 
         stack.set_breakpoint("moved message");
+        let is_64bytes_padding = num_bytes == 64 && c == 1;
 
         //complete message with padding
-        stack.custom(padding_scripts.remove(0), 0, false, 0, "padding");
-        let len = moved_message.len();
-        if len < 128 {
-            for i in 0..(128 - len) {
-                moved_message.push(stack.define(1, &format!("padding[{}]", i)));
+        if !is_64bytes_padding {
+            stack.custom(padding_scripts.remove(0), 0, false, 0, "padding");
+            let len = moved_message.len();
+            if len < 128 {
+                for i in 0..(128 - len) {
+                    moved_message.push(stack.define(1, &format!("padding[{}]", i)));
+                }
             }
-        }
-        stack.set_breakpoint("padding");
+            stack.set_breakpoint("padding");
 
-        //redefine from nibbles to u32
-        assert!(moved_message.len() == 128);
+            //redefine from nibbles to u32
+            assert!(moved_message.len() == 128);
+        }
 
         let mut schedule = Vec::new();
         for i in 0..16 {
+            if is_64bytes_padding {
+                break;
+            }
+
             let joined = stack.join_count(&mut moved_message[0], 7);
+
             stack.rename(joined, &format!("schedule[{}]", i));
             schedule.push(joined);
             moved_message.drain(0..8);
         }
         stack.set_breakpoint("schedule");
-
         for jj in 0..4 {
             if jj != 0 {
                 //schedule loop
                 for i in 16 * jj..16 * (jj + 1) {
+                    if is_64bytes_padding {
+                        break;
+                    }
                     let mut s0 = calculate_s_new(
                         stack,
                         schedule[i - 15],
@@ -496,39 +531,55 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 let mut h = varmap[&'h'];
 
                 if use_add_table {
-                    let to_copy = if jj == 3 { vec![] } else { vec![schedule[i]] };
-                    let to_move = if jj == 3 {
-                        vec![&mut schedule[i]]
+                    let constant = K[i].wrapping_add(if is_64bytes_padding {
+                        scheduling_64[i]
                     } else {
-                        vec![]
-                    };
-                    u4_add_stack(stack, 8, 2, to_copy, to_move, vec![K[i]], quotient, modulo);
-                    let mut parts = stack.from_altstack_count(8);
-                    let mut part1 = stack.join_count(&mut parts[0], 7);
+                        0
+                    });
                     u4_add_stack(
                         stack,
                         8,
                         4,
                         vec![],
-                        vec![&mut s1, &mut ch, &mut h, &mut part1],
-                        vec![],
+                        vec![&mut s1, &mut ch, &mut h],
+                        vec![constant],
                         quotient,
                         modulo,
                     );
+                    if !is_64bytes_padding {
+                        let mut parts = stack.from_altstack_count(8);
+                        let mut part1 = stack.join_count(&mut parts[0], 7);
+                        let to_copy = if jj == 3 { vec![] } else { vec![schedule[i]] };
+                        let to_move = if jj == 3 {
+                            vec![&mut schedule[i], &mut part1]
+                        } else {
+                            vec![&mut part1]
+                        };
+                        u4_add_stack(stack, 8, 2, to_copy, to_move, vec![], quotient, modulo);
+                    }
                 } else {
-                    let to_copy = if jj == 3 { vec![] } else { vec![schedule[i]] };
-                    let to_move = if jj == 3 {
+                    let to_copy = if jj == 3 || is_64bytes_padding {
+                        vec![]
+                    } else {
+                        vec![schedule[i]]
+                    };
+                    let to_move = if jj == 3 && !is_64bytes_padding {
                         vec![&mut s1, &mut ch, &mut h, &mut schedule[i]]
                     } else {
                         vec![&mut s1, &mut ch, &mut h]
                     };
+                    let constant = K[i].wrapping_add(if is_64bytes_padding {
+                        scheduling_64[i]
+                    } else {
+                        0
+                    });
                     u4_add_stack(
                         stack,
                         8,
                         5,
                         to_copy,
                         to_move,
-                        vec![K[i]],
+                        vec![constant],
                         StackVariable::null(),
                         StackVariable::null(),
                     );
