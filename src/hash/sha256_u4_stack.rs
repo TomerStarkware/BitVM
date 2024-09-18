@@ -1,5 +1,6 @@
-use crate::u4::{
-    u4_add_stack::*, u4_logic_stack::*, u4_rot_stack::*, u4_shift_stack::*, u4_std::*,
+use crate::{
+    hash::sha256_u4::debug,
+    u4::{u4_add_stack::*, u4_logic_stack::*, u4_rot_stack::*, u4_shift_stack::*, u4_std::*},
 };
 use bitcoin_script_stack::stack::{define_pushable, script, Script, StackTracker, StackVariable};
 define_pushable!();
@@ -152,28 +153,53 @@ pub fn calculate_s_stack(
     stack.rename(var, "s");
     var
 }
+pub fn calculate_s_new(
+    stack: &mut StackTracker,
+    number: StackVariable,
+    shift_table: StackVariable,
+    shift_values: Vec<u32>,
+    last_is_shift: bool,
+    lookup_table: StackVariable,
+    logic_table: StackVariable,
+) -> StackVariable {
+    let mut results = Vec::new();
+    let number_val = 0xd574e2c5_u32;
+    for i in (0..8).rev() {
+        let mut res = StackVariable::null();
+        for (j, shift_value) in shift_values.iter().enumerate() {
+            let pos_shift = shift_value / 4;
+            let bit_shift = shift_value % 4;
 
-// script! {
-//     for nib in 0..8 {
+            let do_first = !last_is_shift || j < shift_values.len() - 1 || (i + pos_shift) < 8;
+            let do_second = !last_is_shift || j < shift_values.len() - 1 || (i + pos_shift + 1) < 8;
 
-//         {g+7}                     // g_nib_pos
-//         OP_PICK                   // g[nib]
+            let first_nibble = (i + pos_shift) % 8;
+            let second_nibble = (i + pos_shift + 1) % 8;
+            if do_first {
+                stack.copy_var_sub_n(number, 7 - first_nibble);
+                u4_rshift_stack(stack, shift_table, bit_shift);
+            }
+            if do_second {
+                stack.copy_var_sub_n(number, 7 - second_nibble);
+                u4_lshift_stack(stack, shift_table, 4 - bit_shift);
+                stack.op_add();
+            }
+            if j != 0 && do_first {
+                res = u4_logic_with_table_stack(
+                    stack,
+                    lookup_table,
+                    logic_table,
+                    logic_table.size() > 136,
+                );
+            }
+        }
+        results.push(res);
+    }
+    let var = stack.join_count(&mut results[0], 7);
+    stack.rename(var, "s");
+    var
+}
 
-//         OP_DUP                    // g g
-
-//         {f +7 +2 }                  // g g f_nib_pos
-//         OP_PICK                   // g g f
-
-//         { u4_and_half_table(nib + offset_and + 3) }   // g (f ^ g)
-
-//         {e + 7 +2}                     // g (f ^ g) e_nib_pos
-//         OP_PICK                   // g (f ^ g) e
-
-//         { u4_and_with_xor_table(nib + offset_and + 3) }   // g ((f ^ g) & e )
-
-//         { u4_and_half_table(nib + offset_and + 2) }   // g ^ ((f ^ g) & e)
-
-//     }
 pub fn ch1_calculation_stack(
     stack: &mut StackTracker,
     e: StackVariable,
@@ -393,7 +419,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
             if jj != 0 {
                 //schedule loop
                 for i in 16 * jj..16 * (jj + 1) {
-                    let mut s0 = calculate_s_stack(
+                    let mut s0 = calculate_s_new(
                         stack,
                         schedule[i - 15],
                         shift_tables,
@@ -402,7 +428,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                         half_lookup,
                         xor_table,
                     );
-                    let mut s1 = calculate_s_stack(
+                    let mut s1 = calculate_s_new(
                         stack,
                         schedule[i - 2],
                         shift_tables,
@@ -445,7 +471,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
             }
 
             for i in 16 * jj..16 * (jj + 1) {
-                let mut s1 = calculate_s_stack(
+                let mut s1 = calculate_s_new(
                     stack,
                     varmap[&'e'],
                     shift_tables,
@@ -510,7 +536,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 let mut temp1 = stack.from_altstack_joined(8, "temp1");
 
                 //Calculate S0
-                let mut s0 = calculate_s_stack(
+                let mut s0 = calculate_s_new(
                     stack,
                     varmap[&'a'],
                     shift_tables,
