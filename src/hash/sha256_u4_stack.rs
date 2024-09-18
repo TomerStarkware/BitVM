@@ -332,7 +332,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     //println!("{:?}", bytes_per_chunk);
     //println!("{:?}", padding_scripts);
 
-    let mut use_add_table = chunks == 1;
+    let mut use_add_table = chunks <= 2;
 
     let mut message = (0..num_bytes * 2)
         .map(|i| stack.define(1, &format!("message[{}]", i)))
@@ -350,7 +350,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
     let shift_tables = u4_push_shift_tables_stack(stack);
     let half_lookup = u4_push_lookup_table_stack(stack);
-    let mut xor_table = u4_push_xor_table_stack(stack);
+    let xor_table = u4_push_xor_table_stack(stack);
 
     let mut varmap: HashMap<char, StackVariable> = HashMap::new();
     let mut initstate: HashMap<char, StackVariable> = HashMap::new();
@@ -389,193 +389,190 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
         }
         stack.set_breakpoint("schedule");
 
-        //schedule loop
-        for i in 16..64 {
-            let mut s0 = calculate_s_stack(
-                stack,
-                schedule[i - 15],
-                shift_tables,
-                vec![7, 18, 3],
-                true,
-                half_lookup,
-                xor_table,
-            );
-            let mut s1 = calculate_s_stack(
-                stack,
-                schedule[i - 2],
-                shift_tables,
-                vec![17, 19, 10],
-                true,
-                half_lookup,
-                xor_table,
-            );
-            u4_add_stack(
-                stack,
-                8,
-                4,
-                vec![schedule[i - 16], schedule[i - 7]],
-                vec![&mut s0, &mut s1],
-                vec![],
-                quotient,
-                modulo,
-            );
-            let sched_i = stack.from_altstack_joined(8, &format!("schedule[{}]", i));
-            schedule.push(sched_i);
+        for jj in 0..4 {
+            if jj != 0 {
+                //schedule loop
+                for i in 16 * jj..16 * (jj + 1) {
+                    let mut s0 = calculate_s_stack(
+                        stack,
+                        schedule[i - 15],
+                        shift_tables,
+                        vec![7, 18, 3],
+                        true,
+                        half_lookup,
+                        xor_table,
+                    );
+                    let mut s1 = calculate_s_stack(
+                        stack,
+                        schedule[i - 2],
+                        shift_tables,
+                        vec![17, 19, 10],
+                        true,
+                        half_lookup,
+                        xor_table,
+                    );
+                    u4_add_stack(
+                        stack,
+                        8,
+                        4,
+                        vec![schedule[i - 7]],
+                        vec![&mut s0, &mut s1, &mut schedule[i - 16]],
+                        vec![],
+                        quotient,
+                        modulo,
+                    );
+                    let sched_i = stack.from_altstack_joined(8, &format!("schedule[{}]", i));
+                    schedule.push(sched_i);
 
-            stack.set_breakpoint(&format!("schedule[{}]", i));
-        }
-
-        if c == 0 {
-            for i in 0..INITSTATE.len() {
-                let var = stack.number_u32(INITSTATE[i]);
-                varmap.insert(INITSTATE_MAPPING[i], var);
+                    stack.set_breakpoint(&format!("schedule[{}]", i));
+                }
+            } else if c == 0 {
+                for i in 0..INITSTATE.len() {
+                    let var = stack.number_u32(INITSTATE[i]);
+                    varmap.insert(INITSTATE_MAPPING[i], var);
+                }
+            } else {
+                for i in 0..INITSTATE_MAPPING.len() {
+                    varmap.insert(
+                        INITSTATE_MAPPING[i],
+                        stack.from_altstack_joined(8, &format!("{}", INITSTATE_MAPPING[i])),
+                    );
+                    initstate.insert(
+                        INITSTATE_MAPPING[i],
+                        stack.copy_var(varmap[&INITSTATE_MAPPING[i]]),
+                    );
+                }
             }
-        } else {
-            for i in 0..INITSTATE_MAPPING.len() {
-                varmap.insert(
-                    INITSTATE_MAPPING[i],
-                    stack.from_altstack_joined(8, &format!("{}", INITSTATE_MAPPING[i])),
+
+            for i in 16 * jj..16 * (jj + 1) {
+                let mut s1 = calculate_s_stack(
+                    stack,
+                    varmap[&'e'],
+                    shift_tables,
+                    vec![6, 11, 25],
+                    false,
+                    half_lookup,
+                    xor_table,
                 );
-                initstate.insert(
-                    INITSTATE_MAPPING[i],
-                    stack.copy_var(varmap[&INITSTATE_MAPPING[i]]),
+
+                //calculate ch
+                let mut ch = ch1_calculation_stack(
+                    stack,
+                    varmap[&'e'],
+                    varmap[&'f'],
+                    varmap[&'g'],
+                    half_lookup,
+                    xor_table,
+                    shift_tables,
                 );
-            }
-        }
 
-        for i in 0..64 {
-            //calculated that after 6 iterations of chunk 2 the add tables fit in the stack
-            if i == 6 && c == 1 {
-                modulo = u4_push_modulo_table_stack(stack);
-                quotient = u4_push_quotient_table_stack(stack);
-                use_add_table = true;
-            }
+                //calculate temp1
+                let mut h = varmap[&'h'];
 
-            //Calculate S1
-            let mut s1 = calculate_s_stack(
-                stack,
-                varmap[&'e'],
-                shift_tables,
-                vec![6, 11, 25],
-                false,
-                half_lookup,
-                xor_table,
-            );
+                if use_add_table {
+                    let to_copy = if jj == 3 { vec![] } else { vec![schedule[i]] };
+                    let to_move = if jj == 3 {
+                        vec![&mut schedule[i]]
+                    } else {
+                        vec![]
+                    };
+                    u4_add_stack(stack, 8, 2, to_copy, to_move, vec![K[i]], quotient, modulo);
+                    let mut parts = stack.from_altstack_count(8);
+                    let mut part1 = stack.join_count(&mut parts[0], 7);
+                    u4_add_stack(
+                        stack,
+                        8,
+                        4,
+                        vec![],
+                        vec![&mut s1, &mut ch, &mut h, &mut part1],
+                        vec![],
+                        quotient,
+                        modulo,
+                    );
+                } else {
+                    let to_copy = if jj == 3 { vec![] } else { vec![schedule[i]] };
+                    let to_move = if jj == 3 {
+                        vec![&mut s1, &mut ch, &mut h, &mut schedule[i]]
+                    } else {
+                        vec![&mut s1, &mut ch, &mut h]
+                    };
+                    u4_add_stack(
+                        stack,
+                        8,
+                        5,
+                        to_copy,
+                        to_move,
+                        vec![K[i]],
+                        StackVariable::null(),
+                        StackVariable::null(),
+                    );
+                }
+                let mut temp1 = stack.from_altstack_joined(8, "temp1");
 
-            //calculate ch
-            let mut ch = ch1_calculation_stack(
-                stack,
-                varmap[&'e'],
-                varmap[&'f'],
-                varmap[&'g'],
-                half_lookup,
-                xor_table,
-                shift_tables,
-            );
+                //Calculate S0
+                let mut s0 = calculate_s_stack(
+                    stack,
+                    varmap[&'a'],
+                    shift_tables,
+                    vec![2, 13, 22],
+                    false,
+                    half_lookup,
+                    xor_table,
+                );
 
-            //calculate temp1
-            let mut h = varmap[&'h'];
-            if use_add_table {
+                //Calculate maj
+                let mut maj = maj1_calculation_stack(
+                    stack,
+                    varmap[&'a'],
+                    varmap[&'b'],
+                    varmap[&'c'],
+                    half_lookup,
+                    xor_table,
+                    shift_tables,
+                );
+
+                //calculate a = temp1 + s0 + maj
+                u4_add_stack(
+                    stack,
+                    8,
+                    3,
+                    vec![temp1],
+                    vec![&mut s0, &mut maj],
+                    vec![],
+                    quotient,
+                    modulo,
+                );
+                let temp_a = stack.from_altstack_joined(8, "temp_a");
+
+                //e = d + temp1 (consumes d)
+                let mut d = varmap[&'d'];
                 u4_add_stack(
                     stack,
                     8,
                     2,
                     vec![],
-                    vec![&mut schedule[i]],
-                    vec![K[i]],
-                    quotient,
-                    modulo,
-                );
-                let mut parts = stack.from_altstack_count(8);
-                let mut part1 = stack.join_count(&mut parts[0], 7);
-                u4_add_stack(
-                    stack,
-                    8,
-                    4,
-                    vec![],
-                    vec![&mut s1, &mut ch, &mut h, &mut part1],
+                    vec![&mut d, &mut temp1],
                     vec![],
                     quotient,
                     modulo,
                 );
-            } else {
-                u4_add_stack(
-                    stack,
-                    8,
-                    5,
-                    vec![],
-                    vec![&mut s1, &mut ch, &mut h, &mut schedule[i]],
-                    vec![K[i]],
-                    StackVariable::null(),
-                    StackVariable::null(),
-                );
+                let temp_e = stack.from_altstack_joined(8, "temp_e");
+
+                //reorder variables
+                varmap.insert('h', varmap[&'g']);
+                varmap.insert('g', varmap[&'f']);
+                varmap.insert('f', varmap[&'e']);
+                varmap.insert('e', temp_e);
+                varmap.insert('d', varmap[&'c']);
+                varmap.insert('c', varmap[&'b']);
+                varmap.insert('b', varmap[&'a']);
+                varmap.insert('a', temp_a);
+
+                for c in INITSTATE_MAPPING.iter() {
+                    stack.rename(varmap[c], &format!("{}", c));
+                }
+                stack.set_breakpoint(&format!("loop[{}]", i));
             }
-            let mut temp1 = stack.from_altstack_joined(8, "temp1");
-
-            //Calculate S0
-            let mut s0 = calculate_s_stack(
-                stack,
-                varmap[&'a'],
-                shift_tables,
-                vec![2, 13, 22],
-                false,
-                half_lookup,
-                xor_table,
-            );
-
-            //Calculate maj
-            let mut maj = maj1_calculation_stack(
-                stack,
-                varmap[&'a'],
-                varmap[&'b'],
-                varmap[&'c'],
-                half_lookup,
-                xor_table,
-                shift_tables,
-            );
-
-            //calculate a = temp1 + s0 + maj
-            u4_add_stack(
-                stack,
-                8,
-                3,
-                vec![temp1],
-                vec![&mut s0, &mut maj],
-                vec![],
-                quotient,
-                modulo,
-            );
-            let temp_a = stack.from_altstack_joined(8, "temp_a");
-
-            //e = d + temp1 (consumes d)
-            let mut d = varmap[&'d'];
-            u4_add_stack(
-                stack,
-                8,
-                2,
-                vec![],
-                vec![&mut d, &mut temp1],
-                vec![],
-                quotient,
-                modulo,
-            );
-            let temp_e = stack.from_altstack_joined(8, "temp_e");
-
-            //reorder variables
-            varmap.insert('h', varmap[&'g']);
-            varmap.insert('g', varmap[&'f']);
-            varmap.insert('f', varmap[&'e']);
-            varmap.insert('e', temp_e);
-            varmap.insert('d', varmap[&'c']);
-            varmap.insert('c', varmap[&'b']);
-            varmap.insert('b', varmap[&'a']);
-            varmap.insert('a', temp_a);
-
-            for c in INITSTATE_MAPPING.iter() {
-                stack.rename(varmap[c], &format!("{}", c));
-            }
-
-            stack.set_breakpoint(&format!("loop[{}]", i));
         }
 
         if c == 0 {
@@ -614,14 +611,10 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
 
         // if last chunk drop the tables
         if c == chunks - 1 {
-            if use_add_table && chunks == 2 {
-                stack.drop(quotient);
-                stack.drop(modulo);
-            }
             stack.drop(xor_table);
             stack.drop(half_lookup);
             stack.drop(shift_tables);
-            if use_add_table && chunks == 1 {
+            if use_add_table {
                 stack.drop(quotient);
                 stack.drop(modulo);
             }
