@@ -399,9 +399,19 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     stack.set_breakpoint("init");
 
     let shift_tables = u4_push_shift_tables_stack(stack);
-    let half_lookup = u4_push_lookup_table_stack(stack);
+    let use_full_xor = true;
 
-    let xor_table = u4_push_xor_table_stack(stack);
+    let (lookup, xor_table) = if use_full_xor {
+        (
+            u4_push_full_lookup_table_stack(stack),
+            u4_push_xor_full_table_stack(stack),
+        )
+    } else {
+        (
+            u4_push_lookup_table_stack(stack),
+            u4_push_xor_table_stack(stack),
+        )
+    };
 
     let mut varmap: HashMap<char, StackVariable> = HashMap::new();
     let mut initstate: HashMap<char, StackVariable> = HashMap::new();
@@ -460,7 +470,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                         shift_tables,
                         vec![7, 18, 3],
                         true,
-                        half_lookup,
+                        lookup,
                         xor_table,
                     );
                     let mut s1 = calculate_s_new(
@@ -469,7 +479,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                         shift_tables,
                         vec![17, 19, 10],
                         true,
-                        half_lookup,
+                        lookup,
                         xor_table,
                     );
                     u4_add_stack(
@@ -512,7 +522,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     shift_tables,
                     vec![6, 11, 25],
                     false,
-                    half_lookup,
+                    lookup,
                     xor_table,
                 );
 
@@ -522,7 +532,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     varmap[&'e'],
                     varmap[&'f'],
                     varmap[&'g'],
-                    half_lookup,
+                    lookup,
                     xor_table,
                     shift_tables,
                 );
@@ -593,7 +603,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     shift_tables,
                     vec![2, 13, 22],
                     false,
-                    half_lookup,
+                    lookup,
                     xor_table,
                 );
 
@@ -603,7 +613,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     varmap[&'a'],
                     varmap[&'b'],
                     varmap[&'c'],
-                    half_lookup,
+                    lookup,
                     xor_table,
                     shift_tables,
                 );
@@ -689,7 +699,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
         // if last chunk drop the tables
         if c == chunks - 1 {
             stack.drop(xor_table);
-            stack.drop(half_lookup);
+            stack.drop(lookup);
             stack.drop(shift_tables);
             if use_add_table {
                 stack.drop(quotient);
