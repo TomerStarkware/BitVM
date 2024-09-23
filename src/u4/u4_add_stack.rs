@@ -182,7 +182,6 @@ pub fn u4_add_no_table_stack(stack: &mut StackTracker, nibble_count: u32, number
 pub fn u4_add_stack(
     stack: &mut StackTracker,
     nibble_count: u32,
-    number_count: u32,
     to_copy: Vec<StackVariable>,
     to_move: Vec<&mut StackVariable>,
     constants: Vec<u32>,
