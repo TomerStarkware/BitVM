@@ -518,7 +518,12 @@ pub fn u4_add_nibble_stack(
     }
 }
 
-pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
+pub fn sha256_stack(
+    stack: &mut StackTracker,
+    num_bytes: u32,
+    use_add_table: bool,
+    use_full_xor: bool,
+) -> Script {
     // up to 55 is one block and always supports add table
     // probably up to 68 bytes I can afford to load the add tables for the first chunk (but have I would have to unload it)
 
@@ -540,7 +545,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     //println!("{:?}", bytes_per_chunk);
     //println!("{:?}", padding_scripts);
 
-    let mut use_add_table = chunks > 2;
     let scheduling_64 = scheduling_64_padding();
 
     let mut message = (0..num_bytes * 2)
@@ -558,7 +562,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
     stack.set_breakpoint("init");
 
     let shift_tables = u4_push_shift_tables_stack(stack);
-    let use_full_xor = true;
 
     let (lookup, xor_table) = if use_full_xor {
         (
@@ -608,10 +611,16 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                 break;
             }
 
-            let joined = stack.join_count(&mut moved_message[0], 7);
+            let mut sched = [StackVariable::null(); 8];
+            for nib in 0..8 {
+                sched[nib as usize] = moved_message[nib];
+                stack.rename(
+                    sched[nib as usize],
+                    format!("schedule[{}][{}]", i, nib).as_str(),
+                );
+            }
 
-            stack.rename(joined, &format!("schedule[{}]", i));
-            schedule.push(joined);
+            schedule.push(sched);
             moved_message.drain(0..8);
         }
         stack.set_breakpoint("schedule");
@@ -622,35 +631,45 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     if is_64bytes_padding {
                         break;
                     }
-                    let mut s0 = calculate_s_new(
-                        stack,
-                        schedule[i - 15],
-                        shift_tables,
-                        vec![7, 18, 3],
-                        true,
-                        lookup,
-                        xor_table,
-                    );
-                    let mut s1 = calculate_s_new(
-                        stack,
-                        schedule[i - 2],
-                        shift_tables,
-                        vec![17, 19, 10],
-                        true,
-                        lookup,
-                        xor_table,
-                    );
-                    u4_add_stack(
-                        stack,
-                        8,
-                        vec![schedule[i - 7]],
-                        vec![&mut s0, &mut s1, &mut schedule[i - 16]],
-                        vec![],
-                        quotient,
-                        modulo,
-                    );
-                    let sched_i = stack.from_altstack_joined(8, &format!("schedule[{}]", i));
-                    schedule.push(sched_i);
+                    let mut sched: [StackVariable; 8] = [StackVariable::null(); 8];
+                    let mut sched_carry = StackVariable::null();
+                    for nib in (0..8).rev() {
+                        let mut s0 = calculate_s_nib(
+                            stack,
+                            schedule[i - 15],
+                            nib,
+                            shift_tables,
+                            vec![7, 18, 3],
+                            true,
+                            lookup,
+                            xor_table,
+                        );
+                        let mut s1 = calculate_s_nib(
+                            stack,
+                            schedule[i - 2],
+                            nib,
+                            shift_tables,
+                            vec![17, 19, 10],
+                            true,
+                            lookup,
+                            xor_table,
+                        );
+                        stack.op_add();
+                        stack.copy_var(schedule[i - 7][nib as usize]);
+                        stack.op_add();
+                        stack.move_var(schedule[i - 16][nib as usize]);
+                        stack.op_add();
+                        sched[nib as usize] = u4_add_nibble_stack(
+                            stack,
+                            &mut sched_carry,
+                            4,
+                            nib == 0,
+                            quotient,
+                            modulo,
+                        );
+                        stack.rename(sched[nib as usize], format!("sched_{}_{}", i, nib).as_str());
+                    }
+                    schedule.push(sched);
 
                     stack.set_breakpoint(&format!("schedule[{}]", i));
                 }
@@ -714,7 +733,7 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                         stack.op_add();
                     }
 
-                    let temp1 = if use_add_table {
+                    let temp1 = if use_add_table && quotient.size() < 80 {
                         let mut temp1 = u4_add_nibble_stack(
                             stack,
                             &mut temp1_carry,
@@ -732,9 +751,9 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                             stack.number((K[i] << (nib * 4)) >> 28);
                             stack.op_add();
                             if jj == 3 {
-                                stack.move_var_sub_n(&mut schedule[i], nib);
+                                stack.move_var(schedule[i][nib as usize]);
                             } else {
-                                stack.copy_var_sub_n(schedule[i], nib);
+                                stack.copy_var(schedule[i][nib as usize]);
                             }
                             stack.op_add();
 
@@ -763,9 +782,9 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                             stack.number((K[i] << (nib * 4)) >> 28);
                             stack.op_add();
                             if jj == 3 {
-                                stack.move_var_sub_n(&mut schedule[i], nib);
+                                stack.move_var(schedule[i][nib as usize]);
                             } else {
-                                stack.copy_var_sub_n(schedule[i], nib);
+                                stack.copy_var(schedule[i][nib as usize]);
                             }
                             stack.op_add();
                         }
@@ -878,7 +897,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     );
                 }
             }
-            stack.debug();
         } else {
             //first chunk adds with init state
             for i in (0..INITSTATE_MAPPING.len()).rev() {
@@ -918,7 +936,6 @@ pub fn sha256_stack(stack: &mut StackTracker, num_bytes: u32) -> Script {
                     stack.move_var(initstate[&INITSTATE_MAPPING[i]][nib as usize]);
                 }
             }
-            stack.debug();
 
             stack.to_altstack_count(64);
             stack.drop(xor_table);
@@ -956,12 +973,12 @@ mod tests {
     #[test]
     fn test_sizes_tmp() {
         let mut stack = StackTracker::new();
-        let x = sha256_stack(&mut stack, 32);
+        let x = sha256_stack(&mut stack, 32, true, true);
         println!("sha 32 bytes: {}", x.len());
         println!("max stack: {}", stack.get_max_stack_size());
 
         let mut stack = StackTracker::new();
-        let x = sha256_stack(&mut stack, 80);
+        let x = sha256_stack(&mut stack, 80, true, true);
         println!("sha 80 bytes: {}", x.len());
         println!("max stack: {}", stack.get_max_stack_size());
     }
@@ -980,7 +997,7 @@ mod tests {
         //     "message",
         // );
 
-        sha256_stack(&mut stack, 8);
+        sha256_stack(&mut stack, 8, true, true);
         stack.run();
     }
     pub fn u4_hex_to_nibbles(hex_str: &str) -> Script {
@@ -995,7 +1012,7 @@ mod tests {
             }
         }
     }
-    fn test_sha256(hex_in: &str) {
+    fn test_sha256(hex_in: &str, use_add_table: bool, use_full_xor: bool) {
         let mut hasher = Sha256::new();
         let data = hex::decode(hex_in).unwrap();
         hasher.update(&data);
@@ -1014,7 +1031,12 @@ mod tests {
             "message",
         );
         // stack.custom(y, 0, false, 0, "message");
-        let s = sha256_stack(&mut stack, hex_in.len() as u32 / 2);
+        let s = sha256_stack(
+            &mut stack,
+            hex_in.len() as u32 / 2,
+            use_add_table,
+            use_full_xor,
+        );
         println!("script len{}", s.len());
 
         stack.to_altstack_count(64);
@@ -1032,15 +1054,40 @@ mod tests {
     }
     #[test]
     fn foostack80() {
-        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a1045654654457567547547456775647654")
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a1045654654457567547547456775647654", true, true);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a1045654654457567547547456775647654", true, false);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a1045654654457567547547456775647654", false, true);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a1045654654457567547547456775647654", false, false);
     }
     #[test]
     fn foostack64() {
-        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10")
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10", true, true);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10", true, false);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10", false, true);
+        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de84214ad9dac92fb9a82f477cb5ffa4cefe9f749c4c5dd6190cfd197c30d1351a9db171a05883bf3f207a10", false, false);
     }
     #[test]
     fn foostack32() {
-        test_sha256("b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475")
+        test_sha256(
+            "b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475",
+            true,
+            true,
+        );
+        test_sha256(
+            "b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475",
+            true,
+            false,
+        );
+        test_sha256(
+            "b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475",
+            false,
+            true,
+        );
+        test_sha256(
+            "b2222696d574e2c595e60b97b5fd30fe5efb9535de8421654543534534742475",
+            false,
+            false,
+        );
     }
     #[test]
     fn test_sha256_strs() {
@@ -1050,24 +1097,24 @@ mod tests {
             .iter()
             .map(|&b| format!("{:02x}", b))
             .collect();
-        test_sha256(&hex);
+        test_sha256(&hex, true, true);
         let message = "This is a longer message that still fits in one block!";
         let hex: String = message
             .as_bytes()
             .iter()
             .map(|&b| format!("{:02x}", b))
             .collect();
-        test_sha256(&hex)
+        test_sha256(&hex, true, true)
     }
 
     #[test]
     fn test_sha256_two_blocks() {
         let hex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffaaaaaaaa";
-        test_sha256(hex);
+        test_sha256(hex, true, true);
         let hex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff001122334455667788";
-        test_sha256(hex);
+        test_sha256(hex, true, true);
         let hex = "7788ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffaaaaaaaaaaaaaaaa001122334455667788";
-        test_sha256(hex);
+        test_sha256(hex, true, true);
     }
 
     #[test]
@@ -1138,8 +1185,8 @@ mod tests {
         //     0,
         //     "message",
         // );
-        sha256_stack(&mut stack, block_header.len() as u32 / 2);
-        let shascript = sha256_stack(&mut stack, 32);
+        sha256_stack(&mut stack, block_header.len() as u32 / 2, true, true);
+        let shascript = sha256_stack(&mut stack, 32, true, true);
 
         let script = script! {
 

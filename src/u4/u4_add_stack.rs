@@ -1,14 +1,17 @@
 use crate::treepp::{script, Script};
 use bitcoin_script_stack::stack::{StackTracker, StackVariable};
 
-use super::u4_add::{u4_add_no_table_internal, u4_push_modulo_table, u4_push_quotient_table};
+use super::u4_add::{
+    u4_add_no_table_internal, u4_push_modulo_table, u4_push_modulo_table_5, u4_push_quotient_table,
+    u4_push_quotient_table_5,
+};
 
 pub fn u4_push_quotient_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(65, u4_push_quotient_table().compile(), "quotient_table")
+    stack.var(80, u4_push_quotient_table_5().compile(), "quotient_table")
 }
 
 pub fn u4_push_modulo_table_stack(stack: &mut StackTracker) -> StackVariable {
-    stack.var(65, u4_push_modulo_table().compile(), "modulo_table")
+    stack.var(80, u4_push_modulo_table_5().compile(), "modulo_table")
 }
 
 pub fn u4_push_modulo_for_blake(stack: &mut StackTracker) -> StackVariable {
